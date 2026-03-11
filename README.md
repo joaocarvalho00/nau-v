@@ -1,8 +1,8 @@
-# Claude-V
+# Nau-V
 
 A single-cycle **RV32I** RISC-V processor core written in SystemVerilog, generated with [Claude Code](https://claude.ai/code).
 
-Claude-V implements the full base integer instruction set (RV32I) and is designed to be simulated with Verilator. The microarchitecture is deliberately partitioned into the five classic pipeline stages — IF, ID, EX, MEM, WB — to make a future five-stage pipelined version straightforward to build by inserting pipeline registers between the existing stage modules.
+Nau-V implements the full base integer instruction set (RV32I) and is designed to be simulated with Verilator. The microarchitecture is deliberately partitioned into the five classic pipeline stages — IF, ID, EX, MEM, WB — to make a future five-stage pipelined version straightforward to build by inserting pipeline registers between the existing stage modules.
 
 ---
 
@@ -74,7 +74,7 @@ ClaudeV/
 
 ## Architecture
 
-Claude-V is a **single-cycle Harvard architecture**: every instruction completes in exactly one clock cycle, and instruction memory (imem) and data memory (dmem) are physically separate. There are no pipeline registers; all combinational paths connect directly from IF to WB within the same cycle.
+Nau-V is a **single-cycle Harvard architecture**: every instruction completes in exactly one clock cycle, and instruction memory (imem) and data memory (dmem) are physically separate. There are no pipeline registers; all combinational paths connect directly from IF to WB within the same cycle.
 
 The design is modular: each of the five classic RISC-V pipeline stages is a separate SystemVerilog module. The plan is to eventually insert pipeline registers between these modules to build a five-stage pipeline without touching the stage logic itself.
 
