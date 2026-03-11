@@ -1,0 +1,40 @@
+
+/home/joaocarvalho00/Projects/ClaudeV/software/hello/hello.elf:     file format elf32-littleriscv
+
+
+Disassembly of section .text:
+
+00000000 <_start>:
+   0:	00004137          	lui	x2,0x4
+   4:	07400293          	addi	x5,x0,116
+   8:	07400313          	addi	x6,x0,116
+   c:	0062f863          	bgeu	x5,x6,1c <_start+0x1c>
+  10:	0002a023          	sw	x0,0(x5)
+  14:	00428293          	addi	x5,x5,4
+  18:	ff5ff06f          	jal	x0,c <_start+0xc>
+  1c:	008000ef          	jal	x1,24 <main>
+
+00000020 <_halt>:
+  20:	0000006f          	jal	x0,20 <_halt>
+
+00000024 <main>:
+  24:	00100713          	addi	x14,x0,1
+  28:	00000693          	addi	x13,x0,0
+  2c:	00100793          	addi	x15,x0,1
+  30:	09000613          	addi	x12,x0,144
+  34:	00278793          	addi	x15,x15,2
+  38:	00168693          	addi	x13,x13,1
+  3c:	00f70733          	add	x14,x14,x15
+  40:	fee65ae3          	bge	x12,x14,34 <main+0x10>
+  44:	00c00793          	addi	x15,x0,12
+  48:	00f68c63          	beq	x13,x15,60 <main+0x3c>
+  4c:	000017b7          	lui	x15,0x1
+  50:	00d00713          	addi	x14,x0,13
+  54:	00e7a023          	sw	x14,0(x15) # 1000 <_text_end+0xf8c>
+  58:	00100513          	addi	x10,x0,1
+  5c:	00008067          	jalr	x0,0(x1)
+  60:	000017b7          	lui	x15,0x1
+  64:	00100713          	addi	x14,x0,1
+  68:	00e7a023          	sw	x14,0(x15) # 1000 <_text_end+0xf8c>
+  6c:	00000513          	addi	x10,x0,0
+  70:	00008067          	jalr	x0,0(x1)
