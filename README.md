@@ -28,15 +28,18 @@ Nau-V implements the full base integer instruction set (RV32I) and is designed t
 5. [Software](#software)
    - [Bare-Metal Infrastructure](#bare-metal-infrastructure)
    - [Hello World](#hello-world)
-6. [Tools & Dependencies](#tools--dependencies)
-7. [Useful Commands](#useful-commands)
+6. [Synthesis](#synthesis)
+   - [Results](#results)
+   - [Frequency Sweep](#frequency-sweep)
+7. [Tools & Dependencies](#tools--dependencies)
+8. [Useful Commands](#useful-commands)
 
 ---
 
 ## Repository Layout
 
 ```
-ClaudeV/
+NauV/
 ├── src/
 │   ├── if/         # Instruction Fetch stage
 │   │   └── if_stage.sv
@@ -67,7 +70,19 @@ ClaudeV/
 ├── software/
 │   ├── startup/    # Shared bare-metal runtime (startup.S, link.ld, bin2hex.py)
 │   └── hello/      # Example C program
+├── synth/
+│   ├── Makefile    # Synthesis targets: synth, timing, sweep, clean
+│   ├── scripts/
+│   │   ├── synth.ys          # Yosys script (baseline 100 MHz)
+│   │   ├── synth.tcl         # Yosys Tcl script (parameterised, used by sweep)
+│   │   ├── sta.tcl           # OpenSTA timing + power script
+│   │   ├── constraints.sdc   # Clock/IO constraints reference
+│   │   ├── mem_blackbox.v    # Black-box stubs for imem and dmem
+│   │   ├── parse_reports.py  # Parse sweep reports → summary.csv
+│   │   └── plot_results.py   # Generate plots → docs/figures/
+│   └── lib/                  # NanGate45 liberty file (gitignored, download separately)
 └── docs/
+    └── figures/    # Synthesis KPI plots (tracked)
 ```
 
 ---
@@ -349,6 +364,73 @@ Because the core is Harvard, initialised global variables (`.data`) cannot be co
 
 ---
 
+## Synthesis
+
+The `synth/` directory contains a complete logic synthesis flow targeting the **NanGate 45 nm** open-source standard-cell library. The flow uses **Yosys** for synthesis and **OpenSTA** for static timing analysis and power estimation.
+
+Instruction and data memories (`imem`/`dmem`) are black-boxed — they would be SRAM macros in silicon. All metrics reflect the **datapath logic only**.
+
+### Results
+
+Synthesised at 100 MHz target (10 ns clock period):
+
+| Metric | Value |
+|--------|-------|
+| **Area** | 13,966 µm² |
+| **Area** | 17,502 GTE (gate equivalents, referenced to NAND2_X1 = 0.798 µm²) |
+| **Flip-flops** | 1,056 DFF_X1 (34% of area) |
+| **Worst slack (WNS)** | +4.835 ns → timing met |
+| **Critical path** | 5.165 ns |
+| **Fmax (estimated)** | ~194 MHz |
+| **Total power** | 1.37 mW (sequential 60%, combinational 40%) |
+
+### Frequency Sweep
+
+Synthesis was re-run with ABC optimising for each target frequency. The critical path
+consistently measures ~5.165 ns, so timing closes up to 150 MHz and fails at 200 MHz.
+
+| Freq | WNS (ns) | Power (mW) | Status |
+|------|---------|-----------|--------|
+| 50 MHz  | +14.835 | 0.85 | PASS |
+| 100 MHz | +4.835  | 1.37 | PASS |
+| 150 MHz | +1.502  | 1.90 | PASS |
+| 200 MHz | −0.165  | 2.42 | FAIL |
+| 250 MHz | −1.165  | 2.94 | FAIL |
+
+**Fmax (sweep): 150 MHz** — highest tested frequency where timing closes.
+
+![Slack vs Frequency](docs/figures/slack_vs_freq.png)
+
+![Power vs Frequency](docs/figures/power_vs_freq.png)
+
+![Area vs Frequency](docs/figures/area_vs_freq.png)
+
+> Area stays flat across the sweep because Yosys+ABC is a one-shot mapper: it doesn't
+> perform cell upsizing or iterative timing-driven restructuring. Area/speed tradeoffs
+> become visible in a full place-and-route flow (e.g. OpenROAD).
+
+#### Running synthesis
+
+```bash
+# Install tools (Ubuntu/Debian)
+sudo apt install yosys opensta
+
+# Download the NanGate45 liberty file
+mkdir -p synth/lib
+curl -L "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD-flow-scripts/master/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib" \
+     -o synth/lib/NangateOpenCellLibrary_typical.lib
+
+# Phase 1 — synthesis + STA at 100 MHz
+cd synth && make all
+
+# Phase 2 — frequency sweep (50/100/150/200/250 MHz) + plots
+cd synth && make sweep
+```
+
+Reports are written to `synth/reports/` (gitignored). Plots are saved to `docs/figures/`.
+
+---
+
 ## Tools & Dependencies
 
 | Tool | Version | Purpose |
@@ -357,7 +439,9 @@ Because the core is Harvard, initialised global variables (`.data`) cannot be co
 | [GTKWave](https://gtkwave.sourceforge.net/) | any | Waveform viewing |
 | `gcc-riscv64-unknown-elf` | any | Bare-metal C/assembly compiler |
 | `binutils-riscv64-unknown-elf` | any | `objcopy`, `objdump`, linker |
-| Python | ≥ 3.10 | `bin2hex.py` helper script |
+| [Yosys](https://github.com/YosysHQ/yosys) | ≥ 0.35 | Logic synthesis |
+| [OpenSTA](https://github.com/The-OpenROAD-Project/OpenSTA) | any | Static timing analysis + power |
+| Python | ≥ 3.10 | `bin2hex.py` and synthesis report scripts |
 | Make | any | Build system |
 
 Install the toolchain on Ubuntu/Debian:
@@ -443,4 +527,21 @@ cd sim && make clean
 
 # Software build artefacts for one program:
 cd software/hello && make clean
+
+# Synthesis reports and netlists:
+cd synth && make clean
+```
+
+### Run logic synthesis (100 MHz baseline)
+
+```bash
+cd synth
+make all        # synthesis + STA → reports/area.rpt, timing.rpt, power.rpt
+```
+
+### Run frequency sweep (50–250 MHz)
+
+```bash
+cd synth
+make sweep      # re-synthesises at each frequency, parses reports, generates plots
 ```

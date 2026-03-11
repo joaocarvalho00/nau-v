@@ -17,6 +17,11 @@ session.txt
 .claude/
 CLAUDE.md
 
+# Synthesis artefacts
+synth/reports/
+synth/netlist/
+synth/lib/
+
 # Editor / OS
 .DS_Store
 *.swp

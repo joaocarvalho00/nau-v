@@ -1,0 +1,56 @@
+# synth.ys — Yosys synthesis script for NauV (RV32I single-cycle core)
+# Target library : NanGate 45 nm Open Cell Library
+# Run from      : synth/  (all paths are relative to that directory)
+# Usage         : yosys -l reports/yosys.log scripts/synth.ys
+
+# ---------------------------------------------------------------------------
+# 1. Black-box stubs for imem and dmem
+#    Read these BEFORE the RTL so that the (* blackbox *) attribute takes
+#    effect when core.sv instantiates them.
+# ---------------------------------------------------------------------------
+read_verilog scripts/mem_blackbox.v
+
+# ---------------------------------------------------------------------------
+# 2. RTL source files (SystemVerilog)
+# ---------------------------------------------------------------------------
+read_verilog -sv -I../src/if   ../src/if/if_stage.sv
+read_verilog -sv -I../src/id   ../src/id/decoder.sv
+read_verilog -sv -I../src/id   ../src/id/regfile.sv
+read_verilog -sv -I../src/id   ../src/id/id_stage.sv
+read_verilog -sv -I../src/ex   ../src/ex/alu.sv
+read_verilog -sv -I../src/ex   ../src/ex/ex_stage.sv
+read_verilog -sv -I../src/mem  ../src/mem/mem_stage.sv
+read_verilog -sv -I../src/wb   ../src/wb/wb_stage.sv
+read_verilog -sv -I../src/core ../src/core/core.sv
+
+# ---------------------------------------------------------------------------
+# 3. Synthesise
+#    -top core  : top-level module
+#    -flatten   : inline all sub-modules for better cross-boundary optimisation
+# ---------------------------------------------------------------------------
+synth -top core -flatten
+
+# ---------------------------------------------------------------------------
+# 4. Technology mapping
+#    dfflibmap : maps flip-flops to library DFF cells
+#    abc       : maps + optimises combinational logic
+#                -D 10000 = target clock period of 10 000 ps (10 ns = 100 MHz)
+# ---------------------------------------------------------------------------
+dfflibmap -liberty lib/NangateOpenCellLibrary_typical.lib
+
+abc -liberty lib/NangateOpenCellLibrary_typical.lib -D 10000
+
+# ---------------------------------------------------------------------------
+# 5. Clean up dangling wires introduced by technology mapping
+# ---------------------------------------------------------------------------
+clean
+
+# ---------------------------------------------------------------------------
+# 6. Area report (written to reports/area.rpt)
+# ---------------------------------------------------------------------------
+tee -o reports/area.rpt stat -liberty lib/NangateOpenCellLibrary_typical.lib
+
+# ---------------------------------------------------------------------------
+# 7. Gate-level netlist
+# ---------------------------------------------------------------------------
+write_verilog -noattr netlist/core_synth.v
