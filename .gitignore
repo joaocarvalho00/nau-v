@@ -1,4 +1,24 @@
-sim
-CLAUDE.md
+# Verilator build artefacts
+sim/build/
+
+# VCD waveform files
+*.vcd
+
+# Software build artefacts
+software/**/*.o
+software/**/*.elf
+software/**/*.bin
+software/**/*.hex
+software/**/*.dump
+software/startup/startup.o
+
+# Session / local files
 session.txt
-.claude
+.claude/
+CLAUDE.md
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
