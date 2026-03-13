@@ -4,6 +4,17 @@ A single-cycle **RV32I** RISC-V processor core written in SystemVerilog.
 
 Nau-V implements the full base integer instruction set (RV32I) and is designed to be simulated with Verilator. The microarchitecture is deliberately partitioned into the five classic pipeline stages — IF, ID, EX, MEM, WB — to make a future five-stage pipelined version straightforward to build by inserting pipeline registers between the existing stage modules.
 
+## Test Status
+
+<!-- DASHBOARD_START -->
+| Suite | Status | Details | Last run |
+|-------|--------|---------|----------|
+| Unit tests (Verilator) | $\color{green}{\textsf{PASS}}$ | 168/168 checks · 5/5 testbenches | 2026-03-13 17:30 UTC |
+| riscv-tests RV32UI | $\color{green}{\textsf{PASS}}$ | 40/40 passed · 2 skipped | 2026-03-13 17:30 UTC |
+<!-- DASHBOARD_END -->
+
+*Updated automatically by the [pre-commit hook](.githooks/pre-commit) on every commit. Run `bash .githooks/pre-commit` to refresh manually.*
+
 ---
 
 ## Table of Contents
@@ -25,14 +36,15 @@ Nau-V implements the full base integer instruction set (RV32I) and is designed t
    - [Core — `dmem`](#core--dmem)
    - [Core — `core`](#core--core-top-level)
 4. [Testbenches](#testbenches)
-5. [Software](#software)
+5. [Compliance Testing](#compliance-testing)
+6. [Software](#software)
    - [Bare-Metal Infrastructure](#bare-metal-infrastructure)
    - [Hello World](#hello-world)
-6. [Synthesis](#synthesis)
+7. [Synthesis](#synthesis)
    - [Results](#results)
    - [Frequency Sweep](#frequency-sweep)
-7. [Tools & Dependencies](#tools--dependencies)
-8. [Useful Commands](#useful-commands)
+8. [Tools & Dependencies](#tools--dependencies)
+9. [Useful Commands](#useful-commands)
 
 ---
 
@@ -339,6 +351,61 @@ All testbenches are written in pure SystemVerilog and compiled with Verilator's 
 
 ---
 
+## Compliance Testing
+
+Nau-V is verified against the official [riscv-tests](https://github.com/riscv-software-src/riscv-tests) assembly suite. The **RV32UI** (user-mode integer) subset covers every RV32I instruction individually — 40 tests in total.
+
+### How it works
+
+Each test compiles to a small RISC-V binary that runs on the core via `tb_prog`. When all sub-tests inside a test file pass, the program writes `1` to `tohost` (`0x1000` in dmem) and the simulator exits cleanly. A failure writes `(TESTNUM << 1) | 1` instead, encoding which sub-test failed.
+
+A custom NauV test environment (`sim/riscv-tests/env/nauv/`) replaces the standard privilege-mode environment with a bare-metal version that matches the core's Harvard architecture.
+
+### Test coverage
+
+| Category | Tests | Notes |
+|----------|-------|-------|
+| Arithmetic & logic | `add` `addi` `sub` `and` `andi` `or` `ori` `xor` `xori` | All pass |
+| Shifts | `sll` `slli` `srl` `srli` `sra` `srai` | All pass |
+| Comparisons | `slt` `slti` `sltu` `sltiu` | All pass |
+| Upper-immediate | `lui` `auipc` | All pass |
+| Branches | `beq` `bne` `blt` `bltu` `bge` `bgeu` | All pass |
+| Jumps | `jal` `jalr` | All pass |
+| Loads | `lb` `lbu` `lh` `lhu` `lw` | All pass |
+| Stores | `sb` `sh` `sw` | All pass |
+| Misc | `simple` `ld_st` `st_ld` | All pass |
+| Skipped | `fence_i` `ma_data` | Zifencei / trap handling — out of scope for base RV32I |
+
+### Setup
+
+```bash
+# Clone the test suite once (stays gitignored at repo root)
+git clone https://github.com/riscv-software-src/riscv-tests
+
+# Run all tests
+./sim/riscv-tests/run_riscv_tests.sh
+
+# Verbose output (shows simulator log on failure)
+./sim/riscv-tests/run_riscv_tests.sh --verbose
+```
+
+### Decoding a failure
+
+If a test fails, the tohost value encodes the sub-test number:
+
+```
+tohost = (TESTNUM << 1) | 1
+TESTNUM = (tohost - 1) / 2
+```
+
+The simulator prints this automatically, e.g.:
+
+```
+[FAIL]  tohost=0x00000009  (sub-test #4, ...)
+```
+
+---
+
 ## Software
 
 ### Bare-Metal Infrastructure
@@ -544,4 +611,38 @@ make all        # synthesis + STA → reports/area.rpt, timing.rpt, power.rpt
 ```bash
 cd synth
 make sweep      # re-synthesises at each frequency, parses reports, generates plots
+```
+
+### Run the riscv-tests compliance suite
+
+```bash
+# First time: clone the test suite (gitignored, stays local)
+git clone https://github.com/riscv-software-src/riscv-tests
+
+# Run all 40 RV32UI tests
+./sim/riscv-tests/run_riscv_tests.sh
+
+# Show simulator output for each failure
+./sim/riscv-tests/run_riscv_tests.sh --verbose
+
+# Point to a riscv-tests clone elsewhere
+RISCV_TESTS_DIR=/opt/riscv-tests ./sim/riscv-tests/run_riscv_tests.sh
+```
+
+### Pre-commit hook
+
+The hook runs unit tests + riscv-tests automatically before every `git commit` and blocks the commit on failure. It also updates the **Test Status** dashboard in this README.
+
+```bash
+# Activate once per clone
+git config core.hooksPath .githooks
+
+# Verify it is active
+git config core.hooksPath          # should print: .githooks
+
+# Run the full check suite manually (also refreshes the dashboard)
+bash .githooks/pre-commit
+
+# Bypass for a WIP commit (use sparingly)
+git commit --no-verify -m "wip: ..."
 ```

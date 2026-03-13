@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # .githooks/pre-commit — NauV pre-commit hook
 #
-# Runs the full test suite before every commit and blocks the commit if
-# anything fails.  Activated with:
+# Runs the full test suite, updates the README dashboard, and blocks the
+# commit if anything fails.
 #
+# Activate once per clone:
 #   git config core.hooksPath .githooks
-#
-# The riscv-tests compliance suite is skipped silently if the riscv-tests
-# repo has not been cloned yet (see CLAUDE.md Phase 3 for setup).
 
-set -euo pipefail
+set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-RISCV_TESTS_DIR="${RISCV_TESTS_DIR:-$REPO_ROOT/riscv-tests}"
+TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+
+UNIT_LOG="$(mktemp)"
+RISCV_LOG="$(mktemp)"
+trap 'rm -f "$UNIT_LOG" "$RISCV_LOG"' EXIT
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,40 +26,88 @@ echo ""
 echo -e "${BOLD}=== NauV pre-commit checks ===${NC}"
 
 # ---------------------------------------------------------------------------
-# 1. Unit tests (sim/Makefile)
+# 1. Unit tests
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Unit tests ---"
-if make -C "$REPO_ROOT/sim" run --no-print-directory; then
+UNIT_EXIT=0
+make -C "$REPO_ROOT/sim" run --no-print-directory >"$UNIT_LOG" 2>&1 || UNIT_EXIT=$?
+cat "$UNIT_LOG"
+
+if [ $UNIT_EXIT -eq 0 ]; then
     echo -e "${GREEN}PASS${NC} unit tests"
 else
-    echo ""
-    echo -e "${RED}${BOLD}BLOCKED:${NC} Unit tests failed. Fix them before committing."
-    exit 1
+    echo -e "${RED}FAIL${NC} unit tests"
 fi
 
+# Parse unit test counts from log
+UNIT_TB_PASS=$(grep -c "^RESULT: PASS" "$UNIT_LOG" || true)
+UNIT_TB_FAIL=$(grep -c "^RESULT: FAIL" "$UNIT_LOG" || true)
+UNIT_TB_TOTAL=$(( UNIT_TB_PASS + UNIT_TB_FAIL ))
+UNIT_CHECK_PASS=$(grep -cP "^\s{2}PASS\s{2}" "$UNIT_LOG" || true)
+UNIT_CHECK_FAIL=$(grep -cP "^\s{2}FAIL\s{2}" "$UNIT_LOG" || true)
+UNIT_CHECK_TOTAL=$(( UNIT_CHECK_PASS + UNIT_CHECK_FAIL ))
+UNIT_STATUS=$( [[ $UNIT_EXIT -eq 0 ]] && echo "pass" || echo "fail" )
+
 # ---------------------------------------------------------------------------
-# 2. RISC-V compliance tests (skipped if riscv-tests repo not present)
+# 2. riscv-tests compliance suite
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- RISC-V compliance tests ---"
-if [ -d "$RISCV_TESTS_DIR" ]; then
-    if bash "$REPO_ROOT/sim/riscv-tests/run_riscv_tests.sh"; then
+
+RISCV_EXIT=0
+RISCV_STATUS="unavailable"
+RISCV_PASS=0; RISCV_TOTAL=0; RISCV_SKIP=0
+
+if [ -d "$REPO_ROOT/riscv-tests" ]; then
+    bash "$REPO_ROOT/sim/riscv-tests/run_riscv_tests.sh" >"$RISCV_LOG" 2>&1 || RISCV_EXIT=$?
+    cat "$RISCV_LOG"
+
+    # Strip ANSI colour codes before parsing (the run script uses coloured output)
+    RISCV_PLAIN=$(sed 's/\x1b\[[0-9;]*m//g' "$RISCV_LOG")
+    RISCV_PASS=$(echo "$RISCV_PLAIN" | grep -oP 'Passed\s+:\s+\K\d+' || echo 0)
+    RISCV_FAIL=$(echo "$RISCV_PLAIN" | grep -oP 'Failed\s+:\s+\K\d+' || echo 0)
+    RISCV_SKIP=$(echo "$RISCV_PLAIN" | grep -oP 'Skipped\s+:\s+\K\d+' || echo 0)
+    RISCV_TOTAL=$(( RISCV_PASS + RISCV_FAIL ))
+    RISCV_STATUS=$( [[ $RISCV_EXIT -eq 0 ]] && echo "pass" || echo "fail" )
+
+    if [ $RISCV_EXIT -eq 0 ]; then
         echo -e "${GREEN}PASS${NC} riscv-tests"
     else
-        echo ""
-        echo -e "${RED}${BOLD}BLOCKED:${NC} RISC-V compliance tests failed. Fix them before committing."
-        exit 1
+        echo -e "${RED}FAIL${NC} riscv-tests"
     fi
 else
-    echo -e "${YELLOW}SKIPPED${NC} (riscv-tests repo not found at $RISCV_TESTS_DIR)"
-    echo "  To enable: git clone https://github.com/riscv-software-src/riscv-tests $RISCV_TESTS_DIR"
+    echo -e "${YELLOW}SKIPPED${NC} (riscv-tests repo not found at $REPO_ROOT/riscv-tests)"
+    echo "  To enable: git clone https://github.com/riscv-software-src/riscv-tests $REPO_ROOT/riscv-tests"
 fi
 
 # ---------------------------------------------------------------------------
-# All checks passed
+# 3. Update README dashboard
+# ---------------------------------------------------------------------------
+python3 "$REPO_ROOT/scripts/update_dashboard.py" \
+    "$REPO_ROOT/README.md" \
+    --unit-status  "$UNIT_STATUS" \
+    --unit-tb      "${UNIT_TB_PASS}/${UNIT_TB_TOTAL}" \
+    --unit-checks  "${UNIT_CHECK_PASS}/${UNIT_CHECK_TOTAL}" \
+    --riscv-status "$RISCV_STATUS" \
+    --riscv-counts "${RISCV_PASS}/${RISCV_TOTAL}/${RISCV_SKIP}" \
+    --timestamp    "$TIMESTAMP" \
+&& git add "$REPO_ROOT/README.md" \
+|| echo "WARNING: dashboard update failed (non-fatal)"
+
+# ---------------------------------------------------------------------------
+# 4. Final verdict
 # ---------------------------------------------------------------------------
 echo ""
+if [ $UNIT_EXIT -ne 0 ]; then
+    echo -e "${RED}${BOLD}BLOCKED:${NC} Unit tests failed. Fix them before committing."
+    exit 1
+fi
+if [ "${RISCV_EXIT:-0}" -ne 0 ]; then
+    echo -e "${RED}${BOLD}BLOCKED:${NC} RISC-V compliance tests failed. Fix them before committing."
+    exit 1
+fi
+
 echo -e "${GREEN}${BOLD}All checks passed — proceeding with commit.${NC}"
 echo ""
 exit 0
