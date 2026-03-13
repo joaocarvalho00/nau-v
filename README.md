@@ -1,6 +1,6 @@
 # Nau-V
 
-A single-cycle **RV32I** RISC-V processor core written in SystemVerilog, generated with [Claude Code](https://claude.ai/code).
+A single-cycle **RV32I** RISC-V processor core written in SystemVerilog.
 
 Nau-V implements the full base integer instruction set (RV32I) and is designed to be simulated with Verilator. The microarchitecture is deliberately partitioned into the five classic pipeline stages — IF, ID, EX, MEM, WB — to make a future five-stage pipelined version straightforward to build by inserting pipeline registers between the existing stage modules.
 
