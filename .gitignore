@@ -22,6 +22,9 @@ synth/reports/
 synth/netlist/
 synth/lib/
 
+# Benchmark reports (generated at runtime)
+reports/
+
 # riscv-tests source repo (cloned dependency, not committed)
 /riscv-tests/
 

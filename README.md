@@ -9,8 +9,8 @@ Nau-V implements the full base integer instruction set (RV32I) and is designed t
 <!-- DASHBOARD_START -->
 | Suite | Status | Details | Last run |
 |-------|--------|---------|----------|
-| Unit tests (Verilator) | $\color{green}{\textsf{PASS}}$ | 168/168 checks · 5/5 testbenches | 2026-03-13 17:30 UTC |
-| riscv-tests RV32UI | $\color{green}{\textsf{PASS}}$ | 40/40 passed · 2 skipped | 2026-03-13 17:30 UTC |
+| Unit tests (Verilator) | $\color{green}{\textsf{PASS}}$ | 168/168 checks · 5/5 testbenches | 2026-03-13 17:59 UTC |
+| riscv-tests RV32UI | $\color{green}{\textsf{PASS}}$ | 40/40 passed · 2 skipped | 2026-03-13 17:59 UTC |
 <!-- DASHBOARD_END -->
 
 *Updated automatically by the [pre-commit hook](.githooks/pre-commit) on every commit. Run `bash .githooks/pre-commit` to refresh manually.*
@@ -40,11 +40,12 @@ Nau-V implements the full base integer instruction set (RV32I) and is designed t
 6. [Software](#software)
    - [Bare-Metal Infrastructure](#bare-metal-infrastructure)
    - [Hello World](#hello-world)
-7. [Synthesis](#synthesis)
+7. [Dhrystone Benchmark](#dhrystone-benchmark)
+8. [Synthesis](#synthesis)
    - [Results](#results)
    - [Frequency Sweep](#frequency-sweep)
-8. [Tools & Dependencies](#tools--dependencies)
-9. [Useful Commands](#useful-commands)
+9. [Tools & Dependencies](#tools--dependencies)
+10. [Useful Commands](#useful-commands)
 
 ---
 
@@ -81,7 +82,8 @@ NauV/
 │   └── Makefile    # Verilator build + run targets
 ├── software/
 │   ├── startup/    # Shared bare-metal runtime (startup.S, link.ld, bin2hex.py)
-│   └── hello/      # Example C program
+│   ├── hello/      # Example C program
+│   └── dhrystone/  # Dhrystone 2.1 benchmark port
 ├── synth/
 │   ├── Makefile    # Synthesis targets: synth, timing, sweep, clean
 │   ├── scripts/
@@ -93,8 +95,12 @@ NauV/
 │   │   ├── parse_reports.py  # Parse sweep reports → summary.csv
 │   │   └── plot_results.py   # Generate plots → docs/figures/
 │   └── lib/                  # NanGate45 liberty file (gitignored, download separately)
+├── scripts/
+│   ├── update_dashboard.py  # README dashboard updater (used by pre-commit hook)
+│   ├── plot_dhrystone.py    # Dhrystone results plotter
+│   └── ...                  # Synthesis report parsers and plotters
 └── docs/
-    └── figures/    # Synthesis KPI plots (tracked)
+    └── figures/    # Synthesis KPI and benchmark plots (tracked)
 ```
 
 ---
@@ -431,6 +437,46 @@ Because the core is Harvard, initialised global variables (`.data`) cannot be co
 
 ---
 
+## Dhrystone Benchmark
+
+Dhrystone 2.1 is the classic synthetic integer benchmark. It exercises integer operations, struct accesses, string copies and comparisons, and branchy control flow — a representative mix for a general-purpose scalar core.
+
+### Metric: DMIPS/MHz
+
+```
+DMIPS/MHz = (iterations × 1,000,000) / (cycles × 1757)
+```
+
+Since NauV is single-cycle (CPI = 1), `DMIPS/MHz` is a direct measure of instruction-mix efficiency, independent of clock frequency. The constant 1757 is the reference: the VAX-11/780 scores 1 DMIPS.
+
+### Results
+
+| Iterations | Total cycles | Cycles / run | DMIPS/MHz |
+|------------|-------------|--------------|-----------|
+| 100 | 61,960 | 619.6 | 0.92 |
+| 500 | 267,160 | 534.3 | 1.07 |
+| 1,000 | 523,660 | 523.7 | 1.09 |
+| 2,000 | 1,036,660 | 518.3 | 1.10 |
+| 5,000 | 2,580,660 | 516.1 | **1.10** |
+
+The score converges to **1.10 DMIPS/MHz** at steady state (~516 cycles per Dhrystone iteration). The higher cycles/run at small iteration counts reflects one-time startup overhead (BSS zeroing, record initialisation) being amortised over fewer iterations.
+
+For context: ARM Cortex-M0 scores ~0.9 DMIPS/MHz; Cortex-M3 ~1.25 DMIPS/MHz. NauV's single-cycle design delivers competitive integer performance without pipelining.
+
+### Figures
+
+| DMIPS/MHz vs iterations | Cycles per run vs iterations |
+|:-:|:-:|
+| ![DMIPS/MHz](docs/figures/dhrystone_dmips.png) | ![Cycles/run](docs/figures/dhrystone_cpr.png) |
+
+### Implementation Notes
+
+NauV's Harvard architecture requires special handling for string constants (which normally live in `.rodata` / imem and cannot be read by load instructions). The benchmark stores all four Dhrystone strings in the `.data` section — loaded into dmem via `dhrystone.data.hex` — so `strcpy`/`strcmp` work correctly.
+
+The tohost address is **0x3000** (instead of the usual 0x1000) because Dhrystone's `.bss` spans 0x0628–0x2E60; the startup BSS-zeroing loop would otherwise trigger a false PASS/FAIL signal before `main()` runs.
+
+---
+
 ## Synthesis
 
 The `synth/` directory contains a complete logic synthesis flow targeting the **NanGate 45 nm** open-source standard-cell library. The flow uses **Yosys** for synthesis and **OpenSTA** for static timing analysis and power estimation.
@@ -627,6 +673,24 @@ git clone https://github.com/riscv-software-src/riscv-tests
 
 # Point to a riscv-tests clone elsewhere
 RISCV_TESTS_DIR=/opt/riscv-tests ./sim/riscv-tests/run_riscv_tests.sh
+```
+
+### Run the Dhrystone benchmark
+
+```bash
+# Full sweep (5 iteration counts) → reports/dhrystone.csv + docs/figures/*.png
+bash sim/run_dhrystone.sh
+
+# Single run (1000 iterations)
+make -C software/dhrystone -B build NUMBER_OF_RUNS=1000
+sim/build/tb_prog/Vtb_prog \
+    +TEXT_HEX=software/dhrystone/dhrystone.text.hex \
+    +DATA_HEX=software/dhrystone/dhrystone.data.hex \
+    +TOHOST_ADDR=3000 \
+    +TIMEOUT=10000000
+
+# Regenerate plots from existing CSV
+python3 scripts/plot_dhrystone.py
 ```
 
 ### Pre-commit hook
