@@ -22,6 +22,9 @@ synth/reports/
 synth/netlist/
 synth/lib/
 
+# riscv-tests source repo (cloned dependency, not committed)
+/riscv-tests/
+
 # Editor / OS
 .DS_Store
 *.swp

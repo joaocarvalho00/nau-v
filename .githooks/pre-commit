@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — NauV pre-commit hook
+#
+# Runs the full test suite before every commit and blocks the commit if
+# anything fails.  Activated with:
+#
+#   git config core.hooksPath .githooks
+#
+# The riscv-tests compliance suite is skipped silently if the riscv-tests
+# repo has not been cloned yet (see CLAUDE.md Phase 3 for setup).
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+RISCV_TESTS_DIR="${RISCV_TESTS_DIR:-$REPO_ROOT/riscv-tests}"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+echo ""
+echo -e "${BOLD}=== NauV pre-commit checks ===${NC}"
+
+# ---------------------------------------------------------------------------
+# 1. Unit tests (sim/Makefile)
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Unit tests ---"
+if make -C "$REPO_ROOT/sim" run --no-print-directory; then
+    echo -e "${GREEN}PASS${NC} unit tests"
+else
+    echo ""
+    echo -e "${RED}${BOLD}BLOCKED:${NC} Unit tests failed. Fix them before committing."
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 2. RISC-V compliance tests (skipped if riscv-tests repo not present)
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- RISC-V compliance tests ---"
+if [ -d "$RISCV_TESTS_DIR" ]; then
+    if bash "$REPO_ROOT/sim/riscv-tests/run_riscv_tests.sh"; then
+        echo -e "${GREEN}PASS${NC} riscv-tests"
+    else
+        echo ""
+        echo -e "${RED}${BOLD}BLOCKED:${NC} RISC-V compliance tests failed. Fix them before committing."
+        exit 1
+    fi
+else
+    echo -e "${YELLOW}SKIPPED${NC} (riscv-tests repo not found at $RISCV_TESTS_DIR)"
+    echo "  To enable: git clone https://github.com/riscv-software-src/riscv-tests $RISCV_TESTS_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# All checks passed
+# ---------------------------------------------------------------------------
+echo ""
+echo -e "${GREEN}${BOLD}All checks passed — proceeding with commit.${NC}"
+echo ""
+exit 0
