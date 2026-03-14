@@ -75,7 +75,7 @@ UNIT_CHECK_TOTAL=$(( UNIT_CHECK_PASS + UNIT_CHECK_FAIL ))
 UNIT_STATUS=$( [[ $UNIT_EXIT -eq 0 ]] && echo "pass" || echo "fail" )
 
 # ---------------------------------------------------------------------------
-# 2. riscv-tests compliance suite
+# 2. riscv-tests compliance suite — all three configurations
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- RISC-V compliance tests ---"
@@ -85,19 +85,34 @@ RISCV_STATUS="unavailable"
 RISCV_PASS=0; RISCV_TOTAL=0; RISCV_SKIP=0
 
 if [ -d "$REPO_ROOT/riscv-tests" ]; then
-    bash "$REPO_ROOT/sim/riscv-tests/run_riscv_tests.sh" >"$RISCV_LOG" 2>&1 || RISCV_EXIT=$?
-    cat "$RISCV_LOG"
+    for cfg in "${CONFIG_ORDER[@]}"; do
+        args="${CONFIGS[$cfg]}"
+        printf "\n  [%s]\n" "$cfg"
+        cfg_exit=0
+        env $args bash "$REPO_ROOT/sim/riscv-tests/run_riscv_tests.sh" >"$RISCV_LOG" 2>&1 || cfg_exit=$?
+        cat "$RISCV_LOG"
 
-    # Strip ANSI colour codes before parsing (the run script uses coloured output)
-    RISCV_PLAIN=$(sed 's/\x1b\[[0-9;]*m//g' "$RISCV_LOG")
-    RISCV_PASS=$(echo "$RISCV_PLAIN" | grep -oP 'Passed\s+:\s+\K\d+' || echo 0)
-    RISCV_FAIL=$(echo "$RISCV_PLAIN" | grep -oP 'Failed\s+:\s+\K\d+' || echo 0)
-    RISCV_SKIP=$(echo "$RISCV_PLAIN" | grep -oP 'Skipped\s+:\s+\K\d+' || echo 0)
-    RISCV_TOTAL=$(( RISCV_PASS + RISCV_FAIL ))
+        if [ $cfg_exit -eq 0 ]; then
+            echo -e "  ${GREEN}PASS${NC} riscv-tests ($cfg)"
+        else
+            echo -e "  ${RED}FAIL${NC} riscv-tests ($cfg)"
+            RISCV_EXIT=1
+        fi
+
+        # Accumulate counts (strip ANSI codes first)
+        RISCV_PLAIN=$(sed 's/\x1b\[[0-9;]*m//g' "$RISCV_LOG")
+        cfg_pass=$(echo "$RISCV_PLAIN" | grep -oP 'Passed\s+:\s+\K\d+' || echo 0)
+        cfg_fail=$(echo "$RISCV_PLAIN" | grep -oP 'Failed\s+:\s+\K\d+' || echo 0)
+        cfg_skip=$(echo "$RISCV_PLAIN" | grep -oP 'Skipped\s+:\s+\K\d+' || echo 0)
+        RISCV_PASS=$(( RISCV_PASS + cfg_pass ))
+        RISCV_TOTAL=$(( RISCV_TOTAL + cfg_pass + cfg_fail ))
+        RISCV_SKIP=$(( RISCV_SKIP + cfg_skip ))
+    done
+
+    echo ""
     RISCV_STATUS=$( [[ $RISCV_EXIT -eq 0 ]] && echo "pass" || echo "fail" )
-
     if [ $RISCV_EXIT -eq 0 ]; then
-        echo -e "${GREEN}PASS${NC} riscv-tests"
+        echo -e "${GREEN}PASS${NC} riscv-tests (all configurations)"
     else
         echo -e "${RED}FAIL${NC} riscv-tests"
     fi
