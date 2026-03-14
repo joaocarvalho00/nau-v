@@ -2,7 +2,7 @@
 """
 plot_dhrystone.py — Plot NauV Dhrystone benchmark results.
 
-Reads reports/dhrystone.csv and produces two figures:
+Reads reports/dhrystone.csv and reports/dhrystone_pipeline.csv and produces:
   docs/figures/dhrystone_dmips.png   — DMIPS/MHz vs iteration count
   docs/figures/dhrystone_cpr.png     — Cycles per Dhrystone run vs iteration count
 
@@ -23,9 +23,23 @@ except ImportError:
     print("ERROR: matplotlib not installed.  Run: pip install matplotlib")
     sys.exit(1)
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-CSV_PATH  = REPO_ROOT / "reports" / "dhrystone.csv"
-FIG_DIR   = REPO_ROOT / "docs" / "figures"
+REPO_ROOT   = pathlib.Path(__file__).resolve().parent.parent
+FIG_DIR     = REPO_ROOT / "docs" / "figures"
+
+DESIGNS = [
+    {
+        "csv":    REPO_ROOT / "reports" / "dhrystone.csv",
+        "label":  "Single-cycle",
+        "color":  "#2196F3",
+        "marker": "o",
+    },
+    {
+        "csv":    REPO_ROOT / "reports" / "dhrystone_pipeline.csv",
+        "label":  "Pipeline",
+        "color":  "#FF9800",
+        "marker": "s",
+    },
+]
 
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -44,26 +58,28 @@ def load_csv(path):
 
 def style():
     plt.rcParams.update({
-        "figure.dpi":       120,
-        "axes.spines.top":  False,
-        "axes.spines.right":False,
-        "axes.grid":        True,
-        "grid.alpha":       0.4,
-        "font.size":        11,
+        "figure.dpi":        120,
+        "axes.spines.top":   False,
+        "axes.spines.right": False,
+        "axes.grid":         True,
+        "grid.alpha":        0.4,
+        "font.size":         11,
     })
 
 
-def plot_dmips(runs, dmips):
+def plot_dmips(datasets):
     fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(runs, dmips, marker="o", linewidth=2, color="#2196F3",
-            markersize=7, label="NauV (single-cycle RV32I)")
 
-    # Annotate the steady-state value (largest run count)
-    ax.annotate(f"{dmips[-1]:.2f} DMIPS/MHz",
-                xy=(runs[-1], dmips[-1]),
-                xytext=(-90, 10), textcoords="offset points",
-                fontsize=10, color="#1565C0",
-                arrowprops=dict(arrowstyle="->", color="#1565C0", lw=1.2))
+    for d, (runs, _, _, dmips) in datasets:
+        ax.plot(runs, dmips, marker=d["marker"], linewidth=2, color=d["color"],
+                markersize=7, label=d["label"])
+        # Annotate steady-state value at largest run count
+        ax.annotate(f"{dmips[-1]:.2f} DMIPS/MHz",
+                    xy=(runs[-1], dmips[-1]),
+                    xytext=(-90, 10 if d["marker"] == "o" else -20),
+                    textcoords="offset points",
+                    fontsize=9, color=d["color"],
+                    arrowprops=dict(arrowstyle="->", color=d["color"], lw=1.2))
 
     ax.set_xlabel("Number of Dhrystone iterations")
     ax.set_ylabel("DMIPS/MHz")
@@ -79,17 +95,18 @@ def plot_dmips(runs, dmips):
     print(f"  Saved: {out}")
 
 
-def plot_cpr(runs, cpr):
+def plot_cpr(datasets):
     fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(runs, cpr, marker="s", linewidth=2, color="#4CAF50",
-            markersize=7, label="cycles / run")
 
-    # Annotate steady state
-    ax.annotate(f"{cpr[-1]:.0f} cyc/run",
-                xy=(runs[-1], cpr[-1]),
-                xytext=(-80, 15), textcoords="offset points",
-                fontsize=10, color="#2E7D32",
-                arrowprops=dict(arrowstyle="->", color="#2E7D32", lw=1.2))
+    for d, (runs, _, cpr, _) in datasets:
+        ax.plot(runs, cpr, marker=d["marker"], linewidth=2, color=d["color"],
+                markersize=7, label=d["label"])
+        ax.annotate(f"{cpr[-1]:.0f} cyc/run",
+                    xy=(runs[-1], cpr[-1]),
+                    xytext=(-80, 15 if d["marker"] == "o" else -25),
+                    textcoords="offset points",
+                    fontsize=9, color=d["color"],
+                    arrowprops=dict(arrowstyle="->", color=d["color"], lw=1.2))
 
     ax.set_xlabel("Number of Dhrystone iterations")
     ax.set_ylabel("Cycles per Dhrystone run")
@@ -106,16 +123,23 @@ def plot_cpr(runs, cpr):
 
 
 def main():
-    if not CSV_PATH.exists():
-        print(f"ERROR: {CSV_PATH} not found.  Run sim/run_dhrystone.sh first.")
+    style()
+
+    datasets = []
+    for d in DESIGNS:
+        if not d["csv"].exists():
+            print(f"Warning: {d['csv']} not found — skipping {d['label']}")
+            continue
+        data = load_csv(d["csv"])
+        datasets.append((d, data))
+        print(f"Loaded {len(data[0])} data points from {d['csv']}")
+
+    if not datasets:
+        print("ERROR: no Dhrystone CSV files found.  Run sim/run_dhrystone.sh first.")
         sys.exit(1)
 
-    style()
-    runs, cycles, cpr, dmips = load_csv(CSV_PATH)
-
-    print(f"Loaded {len(runs)} data points from {CSV_PATH}")
-    plot_dmips(runs, dmips)
-    plot_cpr(runs, cpr)
+    plot_dmips(datasets)
+    plot_cpr(datasets)
     print("Done.")
 
 

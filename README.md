@@ -1,16 +1,21 @@
 # Nau-V
 
-A single-cycle **RV32I** RISC-V processor core written in SystemVerilog.
+A **RV32I** RISC-V processor core written in SystemVerilog, available in two microarchitectural variants:
 
-Nau-V implements the full base integer instruction set (RV32I) and is designed to be simulated with Verilator. The microarchitecture is deliberately partitioned into the five classic pipeline stages — IF, ID, EX, MEM, WB — to make a future five-stage pipelined version straightforward to build by inserting pipeline registers between the existing stage modules.
+| Variant | Description | CPI |
+|---------|-------------|-----|
+| **Single-cycle** (`core.sv`) | Every instruction completes in exactly one clock cycle | 1.0 |
+| **5-stage pipeline** (`core_pipeline.sv`) | Classic IF/ID/EX/MEM/WB pipeline with full hazard handling | ≥1.0 (stalls on load-use, flush on branch) |
+
+Both variants implement the full base integer instruction set (RV32I, 47 instructions) and share identical port interfaces so testbenches, software, and synthesis scripts work unchanged for either design.
 
 ## Test Status
 
 <!-- DASHBOARD_START -->
 | Suite | Status | Details | Last run |
 |-------|--------|---------|----------|
-| Unit tests (Verilator) | $\color{green}{\textsf{PASS}}$ | 168/168 checks · 5/5 testbenches | 2026-03-13 17:59 UTC |
-| riscv-tests RV32UI | $\color{green}{\textsf{PASS}}$ | 40/40 passed · 2 skipped | 2026-03-13 17:59 UTC |
+| Unit tests (Verilator) | $\color{green}{\textsf{PASS}}$ | 168/168 checks · 5/5 testbenches | 2026-03-14 12:29 UTC |
+| riscv-tests RV32UI | $\color{green}{\textsf{PASS}}$ | 40/40 passed · 2 skipped | 2026-03-14 12:29 UTC |
 <!-- DASHBOARD_END -->
 
 *Updated automatically by the [pre-commit hook](.githooks/pre-commit) on every commit. Run `bash .githooks/pre-commit` to refresh manually.*
@@ -21,29 +26,15 @@ Nau-V implements the full base integer instruction set (RV32I) and is designed t
 
 1. [Repository Layout](#repository-layout)
 2. [Architecture](#architecture)
+   - [Single-cycle](#single-cycle-coreSV)
+   - [5-stage Pipeline](#5-stage-pipeline-core_pipelinesv)
    - [Memory Map](#memory-map)
-   - [Data Path](#data-path)
 3. [RTL Modules](#rtl-modules)
-   - [IF — `if_stage`](#if--if_stage)
-   - [ID — `decoder`](#id--decoder)
-   - [ID — `regfile`](#id--regfile)
-   - [ID — `id_stage`](#id--id_stage)
-   - [EX — `alu`](#ex--alu)
-   - [EX — `ex_stage`](#ex--ex_stage)
-   - [MEM — `mem_stage`](#mem--mem_stage)
-   - [WB — `wb_stage`](#wb--wb_stage)
-   - [Core — `imem`](#core--imem)
-   - [Core — `dmem`](#core--dmem)
-   - [Core — `core`](#core--core-top-level)
 4. [Testbenches](#testbenches)
 5. [Compliance Testing](#compliance-testing)
 6. [Software](#software)
-   - [Bare-Metal Infrastructure](#bare-metal-infrastructure)
-   - [Hello World](#hello-world)
 7. [Dhrystone Benchmark](#dhrystone-benchmark)
 8. [Synthesis](#synthesis)
-   - [Results](#results)
-   - [Frequency Sweep](#frequency-sweep)
 9. [Tools & Dependencies](#tools--dependencies)
 10. [Useful Commands](#useful-commands)
 
@@ -70,35 +61,36 @@ NauV/
 │   └── core/       # Top-level integration + memories
 │       ├── imem.sv
 │       ├── dmem.sv
-│       └── core.sv
+│       ├── core.sv             # Single-cycle top-level
+│       ├── core_pipeline.sv    # 5-stage pipeline top-level
+│       └── hazard_unit.sv      # Stall + flush controller (pipeline only)
 ├── tb/             # SystemVerilog testbenches
 │   ├── tb_alu.sv
 │   ├── tb_regfile.sv
 │   ├── tb_decoder.sv
 │   ├── tb_if_stage.sv
 │   ├── tb_core.sv
-│   └── tb_prog.sv  # Generic program runner
+│   └── tb_prog.sv  # Generic program runner (works for both designs)
 ├── sim/
-│   └── Makefile    # Verilator build + run targets
+│   ├── Makefile                # Verilator build: PIPELINE=0 (default) or PIPELINE=1
+│   ├── run_dhrystone.sh        # Dhrystone sweep: PIPELINE=0/1
+│   └── riscv-tests/            # RISC-V compliance test runner + NauV environment
 ├── software/
 │   ├── startup/    # Shared bare-metal runtime (startup.S, link.ld, bin2hex.py)
 │   ├── hello/      # Example C program
 │   └── dhrystone/  # Dhrystone 2.1 benchmark port
 ├── synth/
-│   ├── Makefile    # Synthesis targets: synth, timing, sweep, clean
+│   ├── Makefile    # Synthesis targets: synth, timing, sweep, sweep_both, clean
 │   ├── scripts/
-│   │   ├── synth.ys          # Yosys script (baseline 100 MHz)
-│   │   ├── synth.tcl         # Yosys Tcl script (parameterised, used by sweep)
+│   │   ├── synth.tcl         # Yosys Tcl script (PIPELINE=0/1 env var)
 │   │   ├── sta.tcl           # OpenSTA timing + power script
-│   │   ├── constraints.sdc   # Clock/IO constraints reference
 │   │   ├── mem_blackbox.v    # Black-box stubs for imem and dmem
 │   │   ├── parse_reports.py  # Parse sweep reports → summary.csv
-│   │   └── plot_results.py   # Generate plots → docs/figures/
+│   │   └── plot_results.py   # Comparison plots → docs/figures/
 │   └── lib/                  # NanGate45 liberty file (gitignored, download separately)
 ├── scripts/
 │   ├── update_dashboard.py  # README dashboard updater (used by pre-commit hook)
-│   ├── plot_dhrystone.py    # Dhrystone results plotter
-│   └── ...                  # Synthesis report parsers and plotters
+│   └── plot_dhrystone.py    # Dhrystone results plotter (single-cycle + pipeline)
 └── docs/
     └── figures/    # Synthesis KPI and benchmark plots (tracked)
 ```
@@ -107,9 +99,53 @@ NauV/
 
 ## Architecture
 
-Nau-V is a **single-cycle Harvard architecture**: every instruction completes in exactly one clock cycle, and instruction memory (imem) and data memory (dmem) are physically separate. There are no pipeline registers; all combinational paths connect directly from IF to WB within the same cycle.
+### Single-cycle (`core.sv`)
 
-The design is modular: each of the five classic RISC-V pipeline stages is a separate SystemVerilog module. The plan is to eventually insert pipeline registers between these modules to build a five-stage pipeline without touching the stage logic itself.
+Every instruction completes in one clock cycle. All combinational paths connect directly from IF to WB within the same cycle. There are no pipeline registers. CPI = 1.0 for all instructions.
+
+```
+         ┌──────────────────────────────────────────────────────┐
+  clk ──►│                                                      │
+  rst ──►│  IF          ID           EX         MEM        WB  │
+         │  ──────      ──────       ──────      ──────     ──  │
+         │  if_stage    id_stage     ex_stage    mem_stage  wb  │
+         │   │ PC        │ decode     │ ALU        │ dmem    │  │
+         │   ▼           │ regfile    │ branch     │ ld/st   ▼  │
+         │  imem         └────────────────────────────────► rd  │
+         │                     ◄── WB writeback ──────────────  │
+         └──────────────────────────────────────────────────────┘
+```
+
+### 5-stage Pipeline (`core_pipeline.sv`)
+
+A classic five-stage in-order pipeline with full hazard handling. Module name and port interface are identical to `core.sv` — the Makefile selects which file to compile via `PIPELINE=0/1`.
+
+```
+  IF        ID        EX        MEM       WB
+  ──────    ──────    ──────    ──────    ──────
+  if_stage  id_stage  ex_stage  mem_stage wb_stage
+    │  ───────►  ───────►  ───────►  ───────►
+    │       IF/ID     ID/EX    EX/MEM   MEM/WB
+    │       reg       reg      reg      reg
+    │
+    ◄─── flush (2 cycles on branch/jump) ────────
+              ◄── EX/MEM forward ──────
+              ◄──── MEM/WB forward ────────────
+```
+
+**Hazard handling:**
+
+| Hazard | Cause | Resolution | Cost |
+|--------|-------|------------|------|
+| Load-use | Load in EX, dependent in ID | Stall IF+ID for 1 cycle, insert bubble into EX | +1 cycle |
+| Control (branch/jump) | Branch/JALR resolves in EX | Flush IF+ID (2 bubbles) | +2 cycles |
+| EX→EX data | Result in EX/MEM needed by EX | Forward `alu_result` → operand mux | 0 cycles |
+| MEM→EX data | Result in MEM/WB needed by EX | Forward `rd_data` → operand mux | 0 cycles |
+| WB→ID data | Writer in WB, reader in ID same cycle | Bypass `wb_rd_data` into ID/EX register | 0 cycles |
+
+The WB→ID bypass is necessary because the register file's asynchronous read output doesn't settle in time for the `always_ff` ID/EX capture when WB writes in the same cycle.
+
+Forwarding is suppressed for load results that are still in the MEM stage (a load-use stall handles those instead).
 
 ### Memory Map
 
@@ -119,26 +155,7 @@ The design is modular: each of the five classic RISC-V pipeline stages is a sepa
 | Data memory | `0x0000_0000` – `0x0000_3FFF` | 16 KB | `dmem` (read/write via load/store) |
 | Stack (top) | `0x0000_4000` | — | `dmem`, grows downward |
 
-Because the architecture is Harvard, instruction and data spaces share the same virtual address range but use separate physical memories. The linker script (`software/startup/link.ld`) exploits this: `.text` and `.data`/`.bss` both start at `0x0`, and the CPU's separate fetch and data buses route them to the correct memory automatically.
-
-### Data Path
-
-```
-         ┌──────────────────────────────────────────────────────┐
-  clk ──►│                                                      │
-  rst ──►│  IF          ID           EX         MEM        WB  │
-         │  ──────      ──────       ──────      ──────     ──  │
-         │  if_stage    id_stage     ex_stage    mem_stage  wb  │
-         │   │ PC        │ decode     │ ALU        │ dmem    │  │
-         │   │           │ regfile    │ branch     │ ld/st   │  │
-         │   ▼           │            │            │         ▼  │
-         │  imem         │            │            │        rd  │
-         │               └────────────────────────────────► WB │
-         │                     ◄── WB writeback ──────────────  │
-         └──────────────────────────────────────────────────────┘
-```
-
-Control signals flow left to right (IF → WB) within each clock cycle. The PC-select signal and branch/jump target flow from EX back to IF as a combinational feedback path. The WB result (register write data, address, and write enable) feeds back into the register file inside `id_stage`.
+Both designs are **Harvard architecture**: instruction and data spaces share the same virtual address range but use separate physical memories.
 
 ---
 
@@ -150,11 +167,12 @@ All modules are written in SystemVerilog. Combinational logic uses `always_comb`
 
 **File:** `src/if/if_stage.sv`
 
-Holds the Program Counter register. On every clock edge it updates PC to either `PC+4` (normal sequential execution) or a redirect target (branch taken or jump). `if_pc_plus4` is a combinational output used by JAL/JALR to save the return address.
+Holds the Program Counter register. `pc_en` (active high) gates PC advance — used by the pipeline's hazard unit for stalls; the single-cycle core ties it high. `if_pc_plus4` is a combinational output used by JAL/JALR to save the return address.
 
 | Port | Direction | Description |
 |------|-----------|-------------|
 | `clk`, `rst` | in | Clock and synchronous active-high reset |
+| `pc_en` | in | `1` = advance PC; `0` = hold (stall) |
 | `pc_sel` | in | `0` = PC+4, `1` = jump/branch target |
 | `if_pc_target` | in | Target address from EX stage |
 | `if_pc` | out | Current PC (registered) |
@@ -170,8 +188,6 @@ On reset, PC is set to `0x0000_0000`.
 
 Fully combinational decoder for all nine RV32I opcode groups. Given a 32-bit instruction word it produces register addresses, a sign-extended immediate, an ALU operation code, and a complete set of control signals for downstream stages.
 
-Decoded groups and the instructions they cover:
-
 | Opcode | Instructions |
 |--------|-------------|
 | R-type (`0110011`) | ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND |
@@ -184,38 +200,13 @@ Decoded groups and the instructions they cover:
 | LUI (`0110111`) | LUI |
 | AUIPC (`0010111`) | AUIPC |
 
-Key control outputs:
-
-| Signal | Description |
-|--------|-------------|
-| `id_alu_op [3:0]` | ALU operation (matches encodings in `alu.sv`) |
-| `id_alu_src` | `0` = rs2, `1` = immediate as ALU operand B |
-| `id_mem_we` / `id_mem_re` | Data memory write / read enable |
-| `id_mem_funct3 [2:0]` | Load/store width and sign-extension mode |
-| `id_reg_we` | Register file write enable |
-| `id_mem_to_reg` | WB mux: `0` = ALU result, `1` = memory data |
-| `id_branch` / `id_jump` / `id_jalr` | Branch or jump instruction flags |
-| `id_pc_to_reg` | Write PC+4 to rd (JAL / JALR) |
-| `id_auipc` | Substitute PC for operand A in EX (AUIPC) |
-
-Unknown opcodes produce all-zero outputs, resulting in a silent no-op.
-
 ---
 
 ### ID — `regfile`
 
 **File:** `src/id/regfile.sv`
 
-32 × 32-bit general-purpose register file. `x0` is hardwired to zero; writes to it are silently ignored. Reads are asynchronous (combinational); writes are synchronous on the rising clock edge.
-
-| Port | Description |
-|------|-------------|
-| `id_rs1_addr`, `id_rs2_addr` | Read address ports (5-bit) |
-| `id_rs1_data`, `id_rs2_data` | Read data ports (32-bit, combinational) |
-| `wb_rd_addr`, `wb_rd_data`, `wb_rd_we` | Write port from WB stage |
-| `dbg_addr`, `dbg_data` | Asynchronous debug read port (testbench use) |
-
-On reset all registers are cleared to zero.
+32 × 32-bit general-purpose register file. `x0` is hardwired to zero. Reads are asynchronous; writes are synchronous on the rising clock edge.
 
 ---
 
@@ -223,7 +214,7 @@ On reset all registers are cleared to zero.
 
 **File:** `src/id/id_stage.sv`
 
-Wrapper module that instantiates `decoder` and `regfile` and wires them together. This is the top-level ID interface seen by `core.sv`. It also exposes the debug read port of the register file so testbenches can inspect arbitrary registers.
+Wrapper that instantiates `decoder` and `regfile`. Exposes the register file's debug read port for testbenches.
 
 ---
 
@@ -231,23 +222,7 @@ Wrapper module that instantiates `decoder` and `regfile` and wires them together
 
 **File:** `src/ex/alu.sv`
 
-Purely combinational. Implements all eleven RV32I ALU operations plus three status flags:
-
-| Code | Operation | Description |
-|------|-----------|-------------|
-| `4'd0` | ADD | `a + b` |
-| `4'd1` | SUB | `a − b` |
-| `4'd2` | SLL | `a << b[4:0]` |
-| `4'd3` | SLT | `1` if `$signed(a) < $signed(b)` |
-| `4'd4` | SLTU | `1` if `a < b` (unsigned) |
-| `4'd5` | XOR | `a ^ b` |
-| `4'd6` | SRL | `a >> b[4:0]` (logical) |
-| `4'd7` | SRA | `a >>> b[4:0]` (arithmetic) |
-| `4'd8` | OR | `a \| b` |
-| `4'd9` | AND | `a & b` |
-| `4'd10` | PASS_B | `b` (used by LUI) |
-
-Status flags — `ex_alu_zero`, `ex_alu_neg`, `ex_alu_overflow` — are used by `ex_stage` to evaluate branch conditions.
+Purely combinational. Implements all eleven RV32I ALU operations (ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, PASS_B) plus zero/neg/overflow status flags.
 
 ---
 
@@ -255,30 +230,7 @@ Status flags — `ex_alu_zero`, `ex_alu_neg`, `ex_alu_overflow` — are used by 
 
 **File:** `src/ex/ex_stage.sv`
 
-Selects ALU operands, instantiates `alu`, evaluates branch conditions, and computes the next-PC target.
-
-**Operand selection:**
-- Operand A: `ex_pc` for AUIPC; `rs1` for everything else.
-- Operand B: immediate (`ex_alu_src=1`) or `rs2` (`ex_alu_src=0`).
-
-For branch instructions, the effective ALU operation is overridden to `SUB` so that the zero, neg, and overflow flags reflect `rs1 − rs2`, regardless of the `id_alu_op` value passed in.
-
-**Branch condition mapping:**
-
-| `funct3` | Instruction | Condition |
-|----------|-------------|-----------|
-| `3'b000` | BEQ | `zero` |
-| `3'b001` | BNE | `!zero` |
-| `3'b100` | BLT | `neg ^ overflow` |
-| `3'b101` | BGE | `!(neg ^ overflow)` |
-| `3'b110` | BLTU | `rs1 < rs2` (unsigned) |
-| `3'b111` | BGEU | `rs1 >= rs2` (unsigned) |
-
-**Jump target:**
-- JALR: `(rs1 + imm) & ~1` (LSB cleared per spec)
-- JAL / branch: `PC + imm`
-
-`ex_pc_sel` is asserted for any jump, or for a branch where the condition is true.
+Selects ALU operands, instantiates `alu`, evaluates branch conditions, and computes the next-PC target. For branches, the ALU is forced to SUB so the zero/neg/overflow flags reflect `rs1 − rs2`. `ex_pc_sel` is asserted for any jump or taken branch.
 
 ---
 
@@ -286,11 +238,7 @@ For branch instructions, the effective ALU operation is overridden to `SUB` so t
 
 **File:** `src/mem/mem_stage.sv`
 
-Purely combinational. Computes byte-enable signals and data alignment for stores, and performs sign/zero extension for loads. The SRAM (`dmem`) is instantiated in `core.sv`; this module sits between EX and the SRAM, preprocessing write data and postprocessing read data.
-
-**Store alignment** (`SB`/`SH`/`SW`): derives a 4-bit `byte_en` from `funct3` and `addr[1:0]` and replicates the source byte/halfword into the correct write-data lanes so that `dmem` can use simple byte-enable masking.
-
-**Load sign/zero extension**: selects the correct byte or halfword from the raw 32-bit word returned by `dmem` using `addr[1:0]`, then sign- or zero-extends to 32 bits based on `funct3`.
+Purely combinational. Computes byte-enable signals and data alignment for stores (SB/SH/SW), and performs sign/zero extension for loads (LB/LBU/LH/LHU/LW).
 
 ---
 
@@ -298,15 +246,7 @@ Purely combinational. Computes byte-enable signals and data alignment for stores
 
 **File:** `src/wb/wb_stage.sv`
 
-Purely combinational. Selects the value to write back to the register file from three candidates:
-
-| Priority | Source | When |
-|----------|--------|------|
-| 1 (highest) | `PC+4` | JAL or JALR (`wb_pc_to_reg=1`) |
-| 2 | Memory read data | Load instruction (`wb_mem_to_reg=1`) |
-| 3 (default) | ALU result | All other ALU / LUI / AUIPC instructions |
-
-Passes `wb_rd_addr` and `wb_rd_we` through unchanged to the register file write port.
+Purely combinational. Selects write-back data from three sources: PC+4 (JAL/JALR), memory read data (loads), or ALU result (everything else).
 
 ---
 
@@ -314,7 +254,7 @@ Passes `wb_rd_addr` and `wb_rd_we` through unchanged to the register file write 
 
 **File:** `src/core/imem.sv`
 
-Asynchronous-read, 4096 × 32-bit instruction memory (16 KB). Word-addressed (`addr[31:2]`). Initialised to `NOP` (`32'h0000_0013`). Includes a clocked write port (`init_we`, `init_addr`, `init_data`) used by testbenches to load programs before reset is de-asserted.
+Asynchronous-read, 4096 × 32-bit instruction memory (16 KB). Initialised to NOP. Includes a clocked write port for testbench program loading.
 
 ---
 
@@ -322,92 +262,75 @@ Asynchronous-read, 4096 × 32-bit instruction memory (16 KB). Word-addressed (`a
 
 **File:** `src/core/dmem.sv`
 
-Synchronous-write, asynchronous-read, 4096 × 32-bit data memory (16 KB). Byte-addressable via a 4-bit byte-enable mask; each byte can be written independently. Word-addressed (`addr[31:2]`). Initialised to zero.
+Synchronous-write, asynchronous-read, 4096 × 32-bit data memory (16 KB) with 4-bit byte-enable masking.
 
 ---
 
-### Core — `core` (top-level)
+### Core — `core` / `core_pipeline` (top-level)
 
-**File:** `src/core/core.sv`
+**Files:** `src/core/core.sv` and `src/core/core_pipeline.sv`
 
-Instantiates all five stage modules, `imem`, and `dmem`, and wires every signal between them. The only feedback paths across stage boundaries are:
-- EX → IF: `ex_pc_sel` and `ex_pc_target` (branch/jump redirect)
-- WB → ID: `wb_rd_data`, `wb_rd_addr`, `wb_rd_we` (register file write-back)
+Both modules are named `core` with identical port interfaces. The Makefile variable `PIPELINE=0/1` selects which file compiles — no `ifdef` directives appear in the RTL.
 
-Debug outputs expose the current PC, the fetched instruction word, an arbitrary register file read (via `dbg_rf_addr` / `dbg_rf_data`), and the data memory write bus (`dbg_mem_addr`, `dbg_mem_wdata`, `dbg_mem_we`) for testbench tohost monitoring.
+`core_pipeline.sv` adds:
+- Four `always_ff` pipeline register blocks (IF/ID, ID/EX, EX/MEM, MEM/WB)
+- `hazard_unit` instantiation for stall and flush control
+- Combinational forwarding muxes for EX/MEM→EX and MEM/WB→EX paths
+- WB→ID bypass in the ID/EX register block
+
+`hazard_unit.sv` detects load-use hazards (stall) and branch/jump resolution (flush), filtering `rs1`/`rs2` use by opcode to avoid spurious stalls.
 
 ---
 
 ## Testbenches
 
-All testbenches are written in pure SystemVerilog and compiled with Verilator's `--binary --timing` flags (no C++ wrapper needed). Each testbench is self-checking, prints `[PASS]` / `[FAIL]` per test case, and dumps a `.vcd` waveform file for GTKWave.
+All testbenches are written in pure SystemVerilog and compiled with Verilator. Each is self-checking, prints `PASS`/`FAIL` per test case, and dumps a `.vcd` waveform.
 
 | Testbench | What it tests | Checks |
 |-----------|--------------|--------|
-| `tb_alu.sv` | All 11 ALU operations, zero/neg/overflow flags | 33 |
+| `tb_alu.sv` | All 11 ALU operations, status flags | 33 |
 | `tb_regfile.sv` | Reset, x0 protection, simultaneous reads, debug port | 13 |
-| `tb_decoder.sv` | All instruction formats and every control signal | 96 |
-| `tb_if_stage.sv` | PC reset, sequential increment, branch redirect | 13 |
-| `tb_core.sv` | Full integration: ALU, LUI, SW/LW, branches, JAL/JALR, AUIPC, byte ops | 13 |
-| `tb_prog.sv` | Generic program runner — loads a compiled hex file at runtime via `$readmemh` | — |
+| `tb_decoder.sv` | All instruction formats and control signals | 96 |
+| `tb_if_stage.sv` | PC reset, sequential increment, branch redirect, stall | 13 |
+| `tb_core.sv` | Full integration (single-cycle only): ALU, loads/stores, branches, jumps | 13 |
+| `tb_prog.sv` | Generic program runner — loads a compiled hex at runtime, monitors tohost | — |
 
-`tb_prog` drives the core with a real compiled binary and monitors the `tohost` address in data memory. The convention is:
-- `*tohost == 1` → PASS
-- `*tohost != 1` (and non-zero) → FAIL; the value encodes which test failed
+`tb_core` is specific to single-cycle timing assumptions and is excluded from the pipeline test suite (compliance testing via `tb_prog` covers correctness instead).
+
+`tb_prog` works with both designs: tohost=1 → PASS, other non-zero → FAIL (encoding: `(TESTNUM<<1)|1`).
 
 ---
 
 ## Compliance Testing
 
-Nau-V is verified against the official [riscv-tests](https://github.com/riscv-software-src/riscv-tests) assembly suite. The **RV32UI** (user-mode integer) subset covers every RV32I instruction individually — 40 tests in total.
-
-### How it works
-
-Each test compiles to a small RISC-V binary that runs on the core via `tb_prog`. When all sub-tests inside a test file pass, the program writes `1` to `tohost` (`0x1000` in dmem) and the simulator exits cleanly. A failure writes `(TESTNUM << 1) | 1` instead, encoding which sub-test failed.
-
-A custom NauV test environment (`sim/riscv-tests/env/nauv/`) replaces the standard privilege-mode environment with a bare-metal version that matches the core's Harvard architecture.
+Nau-V is verified against the official [riscv-tests](https://github.com/riscv-software-src/riscv-tests) RV32UI suite — 40 tests covering every RV32I instruction. Both the single-cycle and pipelined designs pass all 40 tests.
 
 ### Test coverage
 
-| Category | Tests | Notes |
-|----------|-------|-------|
-| Arithmetic & logic | `add` `addi` `sub` `and` `andi` `or` `ori` `xor` `xori` | All pass |
-| Shifts | `sll` `slli` `srl` `srli` `sra` `srai` | All pass |
-| Comparisons | `slt` `slti` `sltu` `sltiu` | All pass |
-| Upper-immediate | `lui` `auipc` | All pass |
-| Branches | `beq` `bne` `blt` `bltu` `bge` `bgeu` | All pass |
-| Jumps | `jal` `jalr` | All pass |
-| Loads | `lb` `lbu` `lh` `lhu` `lw` | All pass |
-| Stores | `sb` `sh` `sw` | All pass |
-| Misc | `simple` `ld_st` `st_ld` | All pass |
-| Skipped | `fence_i` `ma_data` | Zifencei / trap handling — out of scope for base RV32I |
+| Category | Tests | Status |
+|----------|-------|--------|
+| Arithmetic & logic | `add` `addi` `sub` `and` `andi` `or` `ori` `xor` `xori` | PASS |
+| Shifts | `sll` `slli` `srl` `srli` `sra` `srai` | PASS |
+| Comparisons | `slt` `slti` `sltu` `sltiu` | PASS |
+| Upper-immediate | `lui` `auipc` | PASS |
+| Branches | `beq` `bne` `blt` `bltu` `bge` `bgeu` | PASS |
+| Jumps | `jal` `jalr` | PASS |
+| Loads | `lb` `lbu` `lh` `lhu` `lw` | PASS |
+| Stores | `sb` `sh` `sw` | PASS |
+| Misc | `simple` `ld_st` `st_ld` | PASS |
+| Skipped | `fence_i` `ma_data` | Zifencei / trap handling — out of scope |
 
 ### Setup
 
 ```bash
-# Clone the test suite once (stays gitignored at repo root)
+# Clone the test suite once (gitignored at repo root)
 git clone https://github.com/riscv-software-src/riscv-tests
 
-# Run all tests
+# Single-cycle
 ./sim/riscv-tests/run_riscv_tests.sh
 
-# Verbose output (shows simulator log on failure)
-./sim/riscv-tests/run_riscv_tests.sh --verbose
-```
-
-### Decoding a failure
-
-If a test fails, the tohost value encodes the sub-test number:
-
-```
-tohost = (TESTNUM << 1) | 1
-TESTNUM = (tohost - 1) / 2
-```
-
-The simulator prints this automatically, e.g.:
-
-```
-[FAIL]  tohost=0x00000009  (sub-test #4, ...)
+# Pipeline
+./sim/riscv-tests/run_riscv_tests.sh --pipeline
 ```
 
 ---
@@ -420,48 +343,45 @@ The simulator prints this automatically, e.g.:
 
 | File | Purpose |
 |------|---------|
-| `startup.S` | Entry point at `_start` (PC=0): sets `sp=0x4000`, zeroes `.bss`, calls `main`, then spins |
-| `link.ld` | Linker script: `.text` at `0x0` (→ imem), `.bss`/stack at `0x0` in data space (→ dmem), stack top at `0x4000` |
-| `bin2hex.py` | Converts a raw binary to Verilog `$readmemh` hex format with `@address` markers |
-| `Makefile` | Shared rules: compile C → ELF → `.text.hex` + `.data.hex` + disassembly |
+| `startup.S` | Entry at `_start` (PC=0): sets `sp=0x4000`, zeroes `.bss`, calls `main` |
+| `link.ld` | `.text` at `0x0` (→ imem); `.data`/`.bss`/stack in data space (→ dmem) |
+| `bin2hex.py` | Converts raw binary to Verilog `$readmemh` hex format |
 
-Compilation flags used: `-march=rv32i -mabi=ilp32 -nostdlib -ffreestanding`.
+Compilation: `-march=rv32i -mabi=ilp32 -nostdlib -ffreestanding`.
 
-Because the core is Harvard, initialised global variables (`.data`) cannot be copied from instruction memory to data memory at startup. Programs should use only stack-allocated variables or zero-initialised globals (`.bss`).
+Because the core is Harvard, initialised globals (`.data`) must be loaded via a separate `data.hex` file — they cannot be copied from imem at startup.
 
 ### Hello World
 
 **Location:** `software/hello/`
 
-`main.c` runs eight arithmetic and logic tests, then writes `1` to the tohost address `0x1000` on success, or a non-zero error code identifying the failing test otherwise. Tests cover: addition, subtraction, compiler-synthesised multiplication, bitwise AND/OR/XOR, shifts, signed comparison, a loop accumulator, and an integer square root.
+Eight arithmetic/logic tests; writes `tohost=1` on success or an error code identifying the failing test.
 
 ---
 
 ## Dhrystone Benchmark
 
-Dhrystone 2.1 is the classic synthetic integer benchmark. It exercises integer operations, struct accesses, string copies and comparisons, and branchy control flow — a representative mix for a general-purpose scalar core.
-
-### Metric: DMIPS/MHz
+Dhrystone 2.1 is the classic synthetic integer benchmark. The metric is **DMIPS/MHz**:
 
 ```
 DMIPS/MHz = (iterations × 1,000,000) / (cycles × 1757)
 ```
 
-Since NauV is single-cycle (CPI = 1), `DMIPS/MHz` is a direct measure of instruction-mix efficiency, independent of clock frequency. The constant 1757 is the reference: the VAX-11/780 scores 1 DMIPS.
-
 ### Results
 
-| Iterations | Total cycles | Cycles / run | DMIPS/MHz |
-|------------|-------------|--------------|-----------|
-| 100 | 61,960 | 619.6 | 0.92 |
-| 500 | 267,160 | 534.3 | 1.07 |
-| 1,000 | 523,660 | 523.7 | 1.09 |
-| 2,000 | 1,036,660 | 518.3 | 1.10 |
-| 5,000 | 2,580,660 | 516.1 | **1.10** |
+| Iterations | SC Cycles | SC DMIPS/MHz | PL Cycles | PL DMIPS/MHz |
+|------------|-----------|-------------|-----------|-------------|
+| 100  | 61,960  | 0.92 | 94,313  | 0.60 |
+| 500  | 267,160 | 1.07 | 407,513 | 0.70 |
+| 1,000 | 523,660 | 1.09 | 799,013 | 0.71 |
+| 2,000 | 1,036,660 | 1.10 | 1,582,013 | 0.72 |
+| 5,000 | 2,580,660 | **1.10** | 3,936,013 | **0.72** |
 
-The score converges to **1.10 DMIPS/MHz** at steady state (~516 cycles per Dhrystone iteration). The higher cycles/run at small iteration counts reflects one-time startup overhead (BSS zeroing, record initialisation) being amortised over fewer iterations.
+*SC = Single-cycle · PL = Pipeline*
 
-For context: ARM Cortex-M0 scores ~0.9 DMIPS/MHz; Cortex-M3 ~1.25 DMIPS/MHz. NauV's single-cycle design delivers competitive integer performance without pipelining.
+The single-cycle design scores **1.10 DMIPS/MHz** at steady state (~516 cycles/iteration). The pipeline scores **0.72 DMIPS/MHz** (~787 cycles/iteration). The lower pipeline score reflects stall overhead: Dhrystone is a stall-heavy workload with frequent load-use sequences and many short branch-taken paths, each incurring the 2-cycle flush penalty.
+
+For context: ARM Cortex-M0 ~0.9 DMIPS/MHz; Cortex-M3 ~1.25 DMIPS/MHz.
 
 ### Figures
 
@@ -471,46 +391,45 @@ For context: ARM Cortex-M0 scores ~0.9 DMIPS/MHz; Cortex-M3 ~1.25 DMIPS/MHz. Nau
 
 ### Implementation Notes
 
-NauV's Harvard architecture requires special handling for string constants (which normally live in `.rodata` / imem and cannot be read by load instructions). The benchmark stores all four Dhrystone strings in the `.data` section — loaded into dmem via `dhrystone.data.hex` — so `strcpy`/`strcmp` work correctly.
+String constants normally go to `.rodata` (imem) and cannot be read by load instructions on a Harvard core. The benchmark stores all Dhrystone strings in `.data` (→ dmem), loaded via `dhrystone.data.hex`.
 
-The tohost address is **0x3000** (instead of the usual 0x1000) because Dhrystone's `.bss` spans 0x0628–0x2E60; the startup BSS-zeroing loop would otherwise trigger a false PASS/FAIL signal before `main()` runs.
+tohost address is **0x3000** — above the `.bss` region (0x0628–0x2E60), so the startup BSS-zero loop doesn't trigger a false signal.
 
 ---
 
 ## Synthesis
 
-The `synth/` directory contains a complete logic synthesis flow targeting the **NanGate 45 nm** open-source standard-cell library. The flow uses **Yosys** for synthesis and **OpenSTA** for static timing analysis and power estimation.
+The `synth/` directory contains a complete logic synthesis flow targeting **NanGate 45 nm** open-source standard-cell library. Both designs can be synthesised — `PIPELINE=0` (default) or `PIPELINE=1`.
 
-Instruction and data memories (`imem`/`dmem`) are black-boxed — they would be SRAM macros in silicon. All metrics reflect the **datapath logic only**.
+`imem`/`dmem` are black-boxed (SRAM macros in silicon). All metrics reflect **datapath logic only**.
 
-### Results
+### Results at 100 MHz
 
-Synthesised at 100 MHz target (10 ns clock period):
+| Metric | Single-cycle | Pipeline | Delta |
+|--------|-------------|----------|-------|
+| **Area** | 13,852 µm² | 17,099 µm² | +23% |
+| **Area (GTE)** | 17,358 | 21,427 | +23% |
+| **WNS** | +4.822 ns | +4.870 ns | — |
+| **Fmax (estimated)** | ~193 MHz | ~195 MHz | — |
+| **Power** | 1.34 mW | 1.89 mW | +41% |
 
-| Metric | Value |
-|--------|-------|
-| **Area** | 13,966 µm² |
-| **Area** | 17,502 GTE (gate equivalents, referenced to NAND2_X1 = 0.798 µm²) |
-| **Flip-flops** | 1,056 DFF_X1 (34% of area) |
-| **Worst slack (WNS)** | +4.835 ns → timing met |
-| **Critical path** | 5.165 ns |
-| **Fmax (estimated)** | ~194 MHz |
-| **Total power** | 1.37 mW (sequential 60%, combinational 40%) |
+The pipeline area overhead (+23%) comes from the four pipeline register banks, the hazard unit, and the forwarding mux logic. Both designs achieve the same Fmax because the critical path runs through the same combinational logic (decode + ALU + branch evaluation) — the pipeline only adds registers at stage boundaries.
 
-### Frequency Sweep
+### Frequency Sweep (50–250 MHz)
 
-Synthesis was re-run with ABC optimising for each target frequency. The critical path
-consistently measures ~5.165 ns, so timing closes up to 150 MHz and fails at 200 MHz.
+Both designs close timing up to **150 MHz** and fail at 200 MHz.
 
-| Freq | WNS (ns) | Power (mW) | Status |
-|------|---------|-----------|--------|
-| 50 MHz  | +14.835 | 0.85 | PASS |
-| 100 MHz | +4.835  | 1.37 | PASS |
-| 150 MHz | +1.502  | 1.90 | PASS |
-| 200 MHz | −0.165  | 2.42 | FAIL |
-| 250 MHz | −1.165  | 2.94 | FAIL |
+| Freq | SC WNS | SC Power | PL WNS | PL Power |
+|------|--------|----------|--------|----------|
+| 50 MHz  | +14.822 ns | 0.83 mW | +14.870 ns | 1.14 mW |
+| 100 MHz | +4.822 ns  | 1.34 mW | +4.870 ns  | 1.89 mW |
+| 150 MHz | +1.489 ns  | 1.86 mW | +1.536 ns  | 2.65 mW |
+| 200 MHz | −0.178 ns  | 2.37 mW | −0.130 ns  | 3.40 mW |
+| 250 MHz | −1.178 ns  | 2.88 mW | −1.130 ns  | 4.16 mW |
 
-**Fmax (sweep): 150 MHz** — highest tested frequency where timing closes.
+*SC = Single-cycle · PL = Pipeline*
+
+**Fmax (sweep): 150 MHz** for both designs.
 
 ![Slack vs Frequency](docs/figures/slack_vs_freq.png)
 
@@ -518,29 +437,32 @@ consistently measures ~5.165 ns, so timing closes up to 150 MHz and fails at 200
 
 ![Area vs Frequency](docs/figures/area_vs_freq.png)
 
-> Area stays flat across the sweep because Yosys+ABC is a one-shot mapper: it doesn't
-> perform cell upsizing or iterative timing-driven restructuring. Area/speed tradeoffs
-> become visible in a full place-and-route flow (e.g. OpenROAD).
+> Area stays flat across the sweep because Yosys+ABC is a one-shot mapper. Area/speed
+> tradeoffs become visible in a full place-and-route flow (e.g. OpenROAD).
 
-#### Running synthesis
+### Running synthesis
 
 ```bash
-# Install tools (Ubuntu/Debian)
-sudo apt install yosys opensta
-
-# Download the NanGate45 liberty file
+# Download NanGate45 liberty file (once)
 mkdir -p synth/lib
 curl -L "https://raw.githubusercontent.com/The-OpenROAD-Project/OpenROAD-flow-scripts/master/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib" \
      -o synth/lib/NangateOpenCellLibrary_typical.lib
 
-# Phase 1 — synthesis + STA at 100 MHz
-cd synth && make all
+cd synth
 
-# Phase 2 — frequency sweep (50/100/150/200/250 MHz) + plots
-cd synth && make sweep
+# Baseline synthesis + STA (single-cycle)
+make all
+
+# Baseline synthesis + STA (pipeline)
+make all PIPELINE=1
+
+# Frequency sweep — single design
+make sweep           # single-cycle
+make sweep PIPELINE=1  # pipeline
+
+# Frequency sweep — both designs + comparison plots
+make sweep_both
 ```
-
-Reports are written to `synth/reports/` (gitignored). Plots are saved to `docs/figures/`.
 
 ---
 
@@ -554,10 +476,10 @@ Reports are written to `synth/reports/` (gitignored). Plots are saved to `docs/f
 | `binutils-riscv64-unknown-elf` | any | `objcopy`, `objdump`, linker |
 | [Yosys](https://github.com/YosysHQ/yosys) | ≥ 0.35 | Logic synthesis |
 | [OpenSTA](https://github.com/The-OpenROAD-Project/OpenSTA) | any | Static timing analysis + power |
-| Python | ≥ 3.10 | `bin2hex.py` and synthesis report scripts |
+| Python | ≥ 3.10 | `bin2hex.py`, synthesis report scripts |
 | Make | any | Build system |
 
-Install the toolchain on Ubuntu/Debian:
+Install RISC-V toolchain on Ubuntu/Debian:
 
 ```bash
 sudo apt install gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf picolibc-riscv64-unknown-elf
@@ -567,146 +489,98 @@ sudo apt install gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf picolibc-r
 
 ## Useful Commands
 
-All simulation commands are run from the `sim/` directory.
-
-### Run all unit tests
+### Run unit tests
 
 ```bash
 cd sim
+
+# Single-cycle (default)
 make run
+
+# Pipeline
+make run PIPELINE=1
 ```
 
-### Build a single testbench
+### Run a compiled program
 
 ```bash
-make tb_alu
-make tb_decoder
-make tb_core
-# etc.
-```
+cd sim
 
-### Run a single testbench
+# Single-cycle
+make prog TEXT=../software/hello/hello.text.hex
 
-```bash
-./build/tb_alu/Vtb_alu
-./build/tb_core/Vtb_core
+# Pipeline
+make prog TEXT=../software/hello/hello.text.hex PIPELINE=1
 ```
 
 ### Open waveform in GTKWave
 
 ```bash
-# Build, run, and open GTKWave for any testbench module:
-make wave MOD=tb_core
-make wave MOD=tb_alu
-```
-
-### Compile a C program
-
-```bash
-cd software/hello
-make build
-# Produces: hello.text.hex  hello.data.hex  hello.dump
-```
-
-### Run a compiled program on the core
-
-```bash
 cd sim
-make prog TEXT=../software/hello/hello.text.hex
+make wave MOD=tb_core           # single-cycle only
+make wave MOD=tb_alu            # shared
 ```
 
-Optional arguments:
+### RISC-V compliance tests
 
 ```bash
-make prog \
-  TEXT=../software/hello/hello.text.hex \
-  DATA=../software/hello/hello.data.hex \
-  TOHOST=0x1000 \
-  TIMEOUT=100000 \
-  VCD=1            # also dump tb_prog.vcd
-```
-
-### Inspect disassembly of a compiled program
-
-```bash
-cat software/hello/hello.dump
-```
-
-### Clean build artefacts
-
-```bash
-# Simulation build artefacts and VCD files:
-cd sim && make clean
-
-# Software build artefacts for one program:
-cd software/hello && make clean
-
-# Synthesis reports and netlists:
-cd synth && make clean
-```
-
-### Run logic synthesis (100 MHz baseline)
-
-```bash
-cd synth
-make all        # synthesis + STA → reports/area.rpt, timing.rpt, power.rpt
-```
-
-### Run frequency sweep (50–250 MHz)
-
-```bash
-cd synth
-make sweep      # re-synthesises at each frequency, parses reports, generates plots
-```
-
-### Run the riscv-tests compliance suite
-
-```bash
-# First time: clone the test suite (gitignored, stays local)
+# Clone once (gitignored)
 git clone https://github.com/riscv-software-src/riscv-tests
 
-# Run all 40 RV32UI tests
+# Single-cycle
 ./sim/riscv-tests/run_riscv_tests.sh
 
-# Show simulator output for each failure
-./sim/riscv-tests/run_riscv_tests.sh --verbose
+# Pipeline
+./sim/riscv-tests/run_riscv_tests.sh --pipeline
 
-# Point to a riscv-tests clone elsewhere
-RISCV_TESTS_DIR=/opt/riscv-tests ./sim/riscv-tests/run_riscv_tests.sh
+# Verbose output on failure
+./sim/riscv-tests/run_riscv_tests.sh --pipeline --verbose
 ```
 
-### Run the Dhrystone benchmark
+### Dhrystone benchmark
 
 ```bash
-# Full sweep (5 iteration counts) → reports/dhrystone.csv + docs/figures/*.png
+# Full sweep → reports/dhrystone.csv
 bash sim/run_dhrystone.sh
 
-# Single run (1000 iterations)
-make -C software/dhrystone -B build NUMBER_OF_RUNS=1000
-sim/build/tb_prog/Vtb_prog \
-    +TEXT_HEX=software/dhrystone/dhrystone.text.hex \
-    +DATA_HEX=software/dhrystone/dhrystone.data.hex \
-    +TOHOST_ADDR=3000 \
-    +TIMEOUT=10000000
+# Pipeline sweep → reports/dhrystone_pipeline.csv
+PIPELINE=1 bash sim/run_dhrystone.sh
 
-# Regenerate plots from existing CSV
+# Regenerate comparison plots
 python3 scripts/plot_dhrystone.py
 ```
 
-### Pre-commit hook
+### Synthesis
 
-The hook runs unit tests + riscv-tests automatically before every `git commit` and blocks the commit on failure. It also updates the **Test Status** dashboard in this README.
+```bash
+cd synth
+
+# Single-cycle baseline
+make all
+
+# Pipeline baseline
+make all PIPELINE=1
+
+# Frequency sweep, single design
+make sweep             # single-cycle
+make sweep PIPELINE=1  # pipeline
+
+# Both designs with comparison plots
+make sweep_both
+
+# Clean all generated files
+make clean
+```
+
+### Pre-commit hook
 
 ```bash
 # Activate once per clone
 git config core.hooksPath .githooks
 
-# Verify it is active
-git config core.hooksPath          # should print: .githooks
-
-# Run the full check suite manually (also refreshes the dashboard)
+# Run manually
 bash .githooks/pre-commit
 
-# Bypass for a WIP commit (use sparingly)
+# Bypass for WIP commits
 git commit --no-verify -m "wip: ..."
 ```

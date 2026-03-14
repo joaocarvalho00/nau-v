@@ -1,8 +1,9 @@
-# synth.tcl — Yosys synthesis script for NauV (RV32I single-cycle core)
+# synth.tcl — Yosys synthesis script for NauV (RV32I core)
 # Parameterised via environment variables:
 #   PERIOD_PS : ABC timing target in picoseconds (default: 10000 = 100 MHz)
 #   OUTDIR    : directory for area report output  (default: reports)
 #   NETLIST   : output path for gate-level netlist (default: netlist/core_synth.v)
+#   PIPELINE  : 0 = single-cycle core.sv (default), 1 = core_pipeline.sv
 #
 # Usage: PERIOD_PS=5000 OUTDIR=reports/200MHz NETLIST=netlist/200MHz/core_synth.v \
 #            yosys -c scripts/synth.tcl
@@ -10,8 +11,12 @@
 set period_ps [expr {[info exists ::env(PERIOD_PS)] ? int($::env(PERIOD_PS)) : 10000}]
 set outdir    [expr {[info exists ::env(OUTDIR)]    ? $::env(OUTDIR)          : "reports"}]
 set netlist   [expr {[info exists ::env(NETLIST)]   ? $::env(NETLIST)         : "netlist/core_synth.v"}]
+set pipeline  [expr {[info exists ::env(PIPELINE)]  ? int($::env(PIPELINE))   : 0}]
 
 # In yosys -c mode, commands are invoked via the `yosys` proc.
+
+# Define SYNTHESIS so `ifndef SYNTHESIS blocks (simulation assertions etc.) are excluded.
+yosys "verilog_defaults -add -DSYNTHESIS"
 
 # 1. Black-box stubs for imem and dmem
 yosys read_verilog scripts/mem_blackbox.v
@@ -25,7 +30,12 @@ yosys "read_verilog -sv -I../src/ex ../src/ex/alu.sv"
 yosys "read_verilog -sv -I../src/ex ../src/ex/ex_stage.sv"
 yosys "read_verilog -sv -I../src/mem ../src/mem/mem_stage.sv"
 yosys "read_verilog -sv -I../src/wb ../src/wb/wb_stage.sv"
-yosys "read_verilog -sv -I../src/core ../src/core/core.sv"
+if {$pipeline} {
+    yosys "read_verilog -sv -I../src/core ../src/core/hazard_unit.sv"
+    yosys "read_verilog -sv -I../src/core ../src/core/core_pipeline.sv"
+} else {
+    yosys "read_verilog -sv -I../src/core ../src/core/core.sv"
+}
 
 # 3. Synthesise
 yosys "synth -top core -flatten"

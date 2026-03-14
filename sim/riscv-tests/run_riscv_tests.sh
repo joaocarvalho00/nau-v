@@ -13,7 +13,11 @@
 set -euo pipefail
 
 VERBOSE=0
-[[ "${1:-}" == "--verbose" ]] && VERBOSE=1
+PIPELINE="${PIPELINE:-0}"
+for arg in "$@"; do
+    [[ "$arg" == "--verbose" ]] && VERBOSE=1
+    [[ "$arg" == "--pipeline" ]] && PIPELINE=1
+done
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RISCV_TESTS_DIR="${RISCV_TESTS_DIR:-$REPO_ROOT/riscv-tests}"
@@ -63,9 +67,15 @@ fi
 # ---------------------------------------------------------------------------
 # Compile tb_prog once (reused for all tests)
 # ---------------------------------------------------------------------------
-echo "=== Compiling tb_prog ==="
-make -C "$SIM_DIR" tb_prog --no-print-directory
-VTBPROG="$SIM_DIR/build/tb_prog/Vtb_prog"
+if [[ "$PIPELINE" == "1" ]]; then
+    echo "=== Compiling tb_prog (pipeline) ==="
+    make -C "$SIM_DIR" tb_prog PIPELINE=1 --no-print-directory
+    VTBPROG="$SIM_DIR/build/pipeline/tb_prog/Vtb_prog"
+else
+    echo "=== Compiling tb_prog (single-cycle) ==="
+    make -C "$SIM_DIR" tb_prog --no-print-directory
+    VTBPROG="$SIM_DIR/build/single_cycle/tb_prog/Vtb_prog"
+fi
 
 # ---------------------------------------------------------------------------
 # Run each RV32UI test

@@ -4,11 +4,29 @@ BUILD_DIR := build
 
 VERILATOR := verilator
 VFLAGS    := --binary --assert -Wall -Wno-UNUSED -Wno-TIMESCALEMOD \
+             -Wno-DECLFILENAME \
              +1800-2012ext+sv --timing --trace \
              -I$(SRC_DIR)/if -I$(SRC_DIR)/id -I$(SRC_DIR)/ex \
              -I$(SRC_DIR)/mem -I$(SRC_DIR)/wb -I$(SRC_DIR)/core
 
-TESTS := tb_alu tb_regfile tb_decoder tb_if_stage tb_core
+# ---------------------------------------------------------------------------
+# Design selection: PIPELINE=0 → single-cycle core.sv
+#                   PIPELINE=1 → core_pipeline.sv  (module still named `core`)
+# ---------------------------------------------------------------------------
+PIPELINE ?= 0
+
+ifeq ($(PIPELINE),1)
+  CORE_TOP  := $(SRC_DIR)/core/core_pipeline.sv
+  EXTRA_SRC := $(SRC_DIR)/core/hazard_unit.sv
+  # tb_core timing assumptions are single-cycle specific; skip it for pipeline
+  TESTS     := tb_alu tb_regfile tb_decoder tb_if_stage
+  BUILD_SUB := pipeline
+else
+  CORE_TOP  := $(SRC_DIR)/core/core.sv
+  EXTRA_SRC :=
+  TESTS     := tb_alu tb_regfile tb_decoder tb_if_stage tb_core
+  BUILD_SUB := single_cycle
+endif
 
 CORE_SRCS := \
   $(SRC_DIR)/if/if_stage.sv \
@@ -21,18 +39,19 @@ CORE_SRCS := \
   $(SRC_DIR)/wb/wb_stage.sv \
   $(SRC_DIR)/core/imem.sv \
   $(SRC_DIR)/core/dmem.sv \
-  $(SRC_DIR)/core/core.sv
+  $(EXTRA_SRC) \
+  $(CORE_TOP)
 
 .PHONY: all clean run wave prog $(TESTS)
 
 all: $(TESTS)
 
 run: all
-	@echo "=== Running all tests ==="
+	@echo "=== Running all tests (PIPELINE=$(PIPELINE)) ==="
 	@fail=0; \
 	for t in $(TESTS); do \
 	  printf "--- $$t ---\n"; \
-	  if ./$(BUILD_DIR)/$$t/V$$t; then \
+	  if ./$(BUILD_DIR)/$(BUILD_SUB)/$$t/V$$t; then \
 	    printf "RESULT: PASS $$t\n"; \
 	  else \
 	    printf "RESULT: FAIL $$t\n"; \
@@ -42,43 +61,43 @@ run: all
 	[ $$fail -eq 0 ] && echo "=== ALL TESTS PASSED ===" || echo "=== FAILED: $$fail test(s) ==="
 
 tb_alu:
-	mkdir -p $(BUILD_DIR)/tb_alu
+	mkdir -p $(BUILD_DIR)/$(BUILD_SUB)/tb_alu
 	$(VERILATOR) $(VFLAGS) \
 	  $(SRC_DIR)/ex/alu.sv \
 	  $(TB_DIR)/tb_alu.sv \
 	  --top-module tb_alu \
-	  -Mdir $(BUILD_DIR)/tb_alu
+	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_alu
 
 tb_regfile:
-	mkdir -p $(BUILD_DIR)/tb_regfile
+	mkdir -p $(BUILD_DIR)/$(BUILD_SUB)/tb_regfile
 	$(VERILATOR) $(VFLAGS) \
 	  $(SRC_DIR)/id/regfile.sv \
 	  $(TB_DIR)/tb_regfile.sv \
 	  --top-module tb_regfile \
-	  -Mdir $(BUILD_DIR)/tb_regfile
+	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_regfile
 
 tb_decoder:
-	mkdir -p $(BUILD_DIR)/tb_decoder
+	mkdir -p $(BUILD_DIR)/$(BUILD_SUB)/tb_decoder
 	$(VERILATOR) $(VFLAGS) \
 	  $(SRC_DIR)/id/decoder.sv \
 	  $(TB_DIR)/tb_decoder.sv \
 	  --top-module tb_decoder \
-	  -Mdir $(BUILD_DIR)/tb_decoder
+	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_decoder
 
 tb_if_stage:
-	mkdir -p $(BUILD_DIR)/tb_if_stage
+	mkdir -p $(BUILD_DIR)/$(BUILD_SUB)/tb_if_stage
 	$(VERILATOR) $(VFLAGS) \
 	  $(SRC_DIR)/if/if_stage.sv \
 	  $(TB_DIR)/tb_if_stage.sv \
 	  --top-module tb_if_stage \
-	  -Mdir $(BUILD_DIR)/tb_if_stage
+	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_if_stage
 
 tb_core:
 	$(VERILATOR) $(VFLAGS) \
 	  $(CORE_SRCS) \
 	  $(TB_DIR)/tb_core.sv \
 	  --top-module tb_core \
-	  -Mdir $(BUILD_DIR)/tb_core
+	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_core
 
 # ---------------------------------------------------------------------------
 # tb_prog — generic program runner (compiled once, driven by plusargs)
@@ -86,10 +105,11 @@ tb_core:
 PROG_SRCS := $(CORE_SRCS) $(TB_DIR)/tb_prog.sv
 
 tb_prog:
+	mkdir -p $(BUILD_DIR)/$(BUILD_SUB)/tb_prog
 	$(VERILATOR) $(VFLAGS) \
 	  $(PROG_SRCS) \
 	  --top-module tb_prog \
-	  -Mdir $(BUILD_DIR)/tb_prog
+	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_prog
 
 # Run a program:  make prog TEXT=path/to/prog.text.hex [DATA=path/to/prog.data.hex]
 #                           [TOHOST=0x1000] [TIMEOUT=100000] [VCD=1]
@@ -102,7 +122,7 @@ prog: tb_prog
 ifndef TEXT
 	$(error Usage: make prog TEXT=<path/to/prog.text.hex> [DATA=<path>] [TOHOST=0x1000] [TIMEOUT=100000] [VCD=1])
 endif
-	$(BUILD_DIR)/tb_prog/Vtb_prog \
+	$(BUILD_DIR)/$(BUILD_SUB)/tb_prog/Vtb_prog \
 	  +TEXT_HEX=$(TEXT) \
 	  $(if $(DATA),+DATA_HEX=$(DATA),) \
 	  +TOHOST_ADDR=$(TOHOST) \
@@ -117,7 +137,7 @@ ifndef MOD
 	$(error Usage: make wave MOD=<module_name>  e.g. make wave MOD=tb_core)
 endif
 	$(MAKE) $(MOD)
-	./$(BUILD_DIR)/$(MOD)/V$(MOD)
+	./$(BUILD_DIR)/$(BUILD_SUB)/$(MOD)/V$(MOD)
 	gtkwave $(MOD).vcd &
 
 clean:

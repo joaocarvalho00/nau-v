@@ -17,8 +17,18 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SIM_DIR="$REPO_ROOT/sim"
 SW_DIR="$REPO_ROOT/software/dhrystone"
-VTBPROG="$SIM_DIR/build/tb_prog/Vtb_prog"
-OUT_CSV="$REPO_ROOT/reports/dhrystone.csv"
+
+# Pipeline selection: PIPELINE=0 (default) or PIPELINE=1
+PIPELINE="${PIPELINE:-0}"
+if [[ "$PIPELINE" == "1" ]]; then
+    VTBPROG="$SIM_DIR/build/pipeline/tb_prog/Vtb_prog"
+    OUT_CSV="$REPO_ROOT/reports/dhrystone_pipeline.csv"
+    LABEL="Pipeline"
+else
+    VTBPROG="$SIM_DIR/build/single_cycle/tb_prog/Vtb_prog"
+    OUT_CSV="$REPO_ROOT/reports/dhrystone.csv"
+    LABEL="Single-cycle"
+fi
 
 # Dhrystone reference constant (1 DMIPS = 1757 Dhrystones/second)
 DHRYSTONES_PER_DMIPS=1757
@@ -33,14 +43,18 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 echo ""
-echo -e "${BOLD}=== NauV Dhrystone Benchmark ===${NC}"
+echo -e "${BOLD}=== NauV Dhrystone Benchmark ($LABEL) ===${NC}"
 
 # ---------------------------------------------------------------------------
 # Prerequisite checks
 # ---------------------------------------------------------------------------
 if [ ! -x "$VTBPROG" ]; then
     echo -e "${RED}ERROR:${NC} Vtb_prog not found at $VTBPROG"
-    echo "  Build it first: cd sim && make tb_prog"
+    if [[ "$PIPELINE" == "1" ]]; then
+        echo "  Build it first: cd sim && make tb_prog PIPELINE=1"
+    else
+        echo "  Build it first: cd sim && make tb_prog"
+    fi
     exit 1
 fi
 

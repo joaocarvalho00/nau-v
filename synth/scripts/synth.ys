@@ -4,6 +4,11 @@
 # Usage         : yosys -l reports/yosys.log scripts/synth.ys
 
 # ---------------------------------------------------------------------------
+# 0. Exclude simulation-only blocks from synthesis
+# ---------------------------------------------------------------------------
+verilog_defaults -add -DSYNTHESIS
+
+# ---------------------------------------------------------------------------
 # 1. Black-box stubs for imem and dmem
 #    Read these BEFORE the RTL so that the (* blackbox *) attribute takes
 #    effect when core.sv instantiates them.

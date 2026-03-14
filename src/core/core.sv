@@ -82,6 +82,7 @@ module core (
     if_stage u_if_stage (
         .clk           (clk),
         .rst           (rst),
+        .pc_en         (1'b1),        // single-cycle always advances
         .pc_sel        (ex_pc_sel),
         .if_pc_target  (ex_pc_target),
         .if_pc         (if_pc),

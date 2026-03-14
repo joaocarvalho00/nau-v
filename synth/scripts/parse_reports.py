@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Parse synthesis and STA reports for each sweep frequency → reports/summary.csv."""
+"""Parse synthesis and STA reports for each sweep frequency → reports/summary.csv.
+
+Usage:
+  python3 parse_reports.py           # parse whichever design dirs exist
+  python3 parse_reports.py --both    # parse both single_cycle and pipeline
+"""
 
 import re
 import csv
 import os
+import sys
 
 FREQS = [50, 100, 150, 200, 250]
 NAND2_AREA_UM2 = 0.798  # NAND2_X1 area in NanGate45
@@ -37,7 +43,6 @@ def parse_power(path):
     """Return total power in mW from power.rpt."""
     with open(path) as f:
         text = f.read()
-    # Match: "Total  X.XXe-XX  X.XXe-XX  X.XXe-XX  X.XXe-XX  100.0%"
     m = re.search(
         r"^Total\s+\S+\s+\S+\s+\S+\s+([\d.e+\-]+)\s+\d+\.\d+%",
         text, re.MULTILINE
@@ -47,7 +52,8 @@ def parse_power(path):
     return float(m.group(1)) * 1000.0  # W → mW
 
 
-def main():
+def parse_design(design_name):
+    """Parse all frequency reports for one design. Returns list of row dicts."""
     rows = []
     fmax_achieved = None
 
@@ -55,7 +61,7 @@ def main():
     print("-" * 65)
 
     for freq in FREQS:
-        d = f"reports/{freq}MHz"
+        d = f"reports/{design_name}/{freq}MHz"
         files = [f"{d}/area.rpt", f"{d}/timing.rpt", f"{d}/power.rpt"]
 
         if not all(os.path.exists(f) for f in files):
@@ -82,6 +88,7 @@ def main():
         )
 
         rows.append({
+            "design":        design_name,
             "freq_mhz":      freq,
             "period_ns":     period_ns,
             "area_um2":      round(area_um2, 2) if area_um2  is not None else "",
@@ -93,21 +100,45 @@ def main():
             "power_mw":      round(power_mw, 3) if power_mw  is not None else "",
         })
 
-    if not rows:
-        print("No reports found. Run 'make sweep' first.")
+    return rows, fmax_achieved
+
+
+def main():
+    both = "--both" in sys.argv
+
+    if both:
+        designs = ["single_cycle", "pipeline"]
+    else:
+        # Auto-detect which designs have reports
+        designs = []
+        for d in ["single_cycle", "pipeline"]:
+            if os.path.isdir(f"reports/{d}"):
+                designs.append(d)
+        if not designs:
+            print("No reports found. Run 'make sweep' first.")
+            return
+
+    all_rows = []
+    for design in designs:
+        print(f"\n=== {design.replace('_', '-')} ===")
+        rows, fmax = parse_design(design)
+        all_rows.extend(rows)
+        if fmax:
+            print(f"\nFmax ({design}): {fmax} MHz  (highest frequency with slack ≥ 0)")
+        else:
+            print(f"\nFmax ({design}): timing failed at all tested frequencies")
+
+    if not all_rows:
+        print("No reports parsed.")
         return
 
     csv_path = "reports/summary.csv"
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(f, fieldnames=all_rows[0].keys())
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(all_rows)
 
     print(f"\nSummary → {csv_path}")
-    if fmax_achieved:
-        print(f"Fmax (sweep): {fmax_achieved} MHz  (highest frequency with slack ≥ 0)")
-    else:
-        print("Fmax: timing failed at all tested frequencies")
 
 
 if __name__ == "__main__":

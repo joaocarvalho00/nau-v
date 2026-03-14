@@ -7,6 +7,7 @@
 module if_stage (
     input  logic        clk,
     input  logic        rst,
+    input  logic        pc_en,         // 1 = advance/redirect, 0 = stall (hold PC)
     input  logic        pc_sel,        // 0 = PC+4, 1 = branch/jump target
     input  logic [31:0] if_pc_target,  // target address from EX stage
     output logic [31:0] if_pc,         // current PC (registered)
@@ -22,13 +23,15 @@ module if_stage (
 
     // -----------------------------------------------------------------------
     // PC register — synchronous, active-high reset
+    // pc_en=0 holds the PC (pipeline stall); pc_en=1 advances/redirects.
     // -----------------------------------------------------------------------
     always_ff @(posedge clk) begin
         if (rst) begin
             if_pc <= 32'h0000_0000;
-        end else begin
+        end else if (pc_en) begin
             if_pc <= pc_sel ? if_pc_target : if_pc_plus4;
         end
+        // else: hold PC (stall)
     end
 
 endmodule

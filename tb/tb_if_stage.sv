@@ -26,6 +26,7 @@ module tb_if_stage;
     if_stage u_if_stage (
         .clk          (clk),
         .rst          (rst),
+        .pc_en        (1'b1),         // always enabled for unit test
         .pc_sel       (pc_sel),
         .if_pc_target (if_pc_target),
         .if_pc        (if_pc),
