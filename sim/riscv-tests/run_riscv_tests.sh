@@ -14,9 +14,11 @@ set -euo pipefail
 
 VERBOSE=0
 PIPELINE="${PIPELINE:-0}"
+BRANCH_PREDICT="${BRANCH_PREDICT:-0}"
 for arg in "$@"; do
-    [[ "$arg" == "--verbose" ]] && VERBOSE=1
-    [[ "$arg" == "--pipeline" ]] && PIPELINE=1
+    [[ "$arg" == "--verbose" ]]        && VERBOSE=1
+    [[ "$arg" == "--pipeline" ]]       && PIPELINE=1
+    [[ "$arg" == "--branch-predict" ]] && BRANCH_PREDICT=1
 done
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -67,7 +69,11 @@ fi
 # ---------------------------------------------------------------------------
 # Compile tb_prog once (reused for all tests)
 # ---------------------------------------------------------------------------
-if [[ "$PIPELINE" == "1" ]]; then
+if [[ "$BRANCH_PREDICT" == "1" ]]; then
+    echo "=== Compiling tb_prog (pipeline + branch predictor) ==="
+    make -C "$SIM_DIR" tb_prog PIPELINE=1 BRANCH_PREDICT=1 --no-print-directory
+    VTBPROG="$SIM_DIR/build/pipeline_bp/tb_prog/Vtb_prog"
+elif [[ "$PIPELINE" == "1" ]]; then
     echo "=== Compiling tb_prog (pipeline) ==="
     make -C "$SIM_DIR" tb_prog PIPELINE=1 --no-print-directory
     VTBPROG="$SIM_DIR/build/pipeline/tb_prog/Vtb_prog"

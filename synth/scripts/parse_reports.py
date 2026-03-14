@@ -4,6 +4,7 @@
 Usage:
   python3 parse_reports.py           # parse whichever design dirs exist
   python3 parse_reports.py --both    # parse both single_cycle and pipeline
+  python3 parse_reports.py --all     # parse single_cycle, pipeline, and pipeline_bp
 """
 
 import re
@@ -105,13 +106,16 @@ def parse_design(design_name):
 
 def main():
     both = "--both" in sys.argv
+    all_designs = "--all" in sys.argv
 
-    if both:
+    if all_designs:
+        designs = ["single_cycle", "pipeline", "pipeline_bp"]
+    elif both:
         designs = ["single_cycle", "pipeline"]
     else:
         # Auto-detect which designs have reports
         designs = []
-        for d in ["single_cycle", "pipeline"]:
+        for d in ["single_cycle", "pipeline", "pipeline_bp"]:
             if os.path.isdir(f"reports/{d}"):
                 designs.append(d)
         if not designs:

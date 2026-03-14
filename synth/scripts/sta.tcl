@@ -18,6 +18,9 @@ puts "\n========== STA: [format %.0f $freq_mhz] MHz (period = $period_ns ns) ===
 # 1. Read library and netlist
 # ---------------------------------------------------------------------------
 read_liberty lib/NangateOpenCellLibrary_typical.lib
+# Provide black-box module definitions (imem, dmem) so OpenSTA can resolve
+# references in the gate-level netlist.
+read_verilog  scripts/sta_blackbox.v
 read_verilog  $netlist
 link_design   core
 

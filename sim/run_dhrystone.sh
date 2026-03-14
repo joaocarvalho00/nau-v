@@ -18,9 +18,14 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SIM_DIR="$REPO_ROOT/sim"
 SW_DIR="$REPO_ROOT/software/dhrystone"
 
-# Pipeline selection: PIPELINE=0 (default) or PIPELINE=1
+# Pipeline/branch-predictor selection
 PIPELINE="${PIPELINE:-0}"
-if [[ "$PIPELINE" == "1" ]]; then
+BRANCH_PREDICT="${BRANCH_PREDICT:-0}"
+if [[ "$BRANCH_PREDICT" == "1" ]]; then
+    VTBPROG="$SIM_DIR/build/pipeline_bp/tb_prog/Vtb_prog"
+    OUT_CSV="$REPO_ROOT/reports/dhrystone_pipeline_bp.csv"
+    LABEL="Pipeline+BP"
+elif [[ "$PIPELINE" == "1" ]]; then
     VTBPROG="$SIM_DIR/build/pipeline/tb_prog/Vtb_prog"
     OUT_CSV="$REPO_ROOT/reports/dhrystone_pipeline.csv"
     LABEL="Pipeline"
@@ -50,7 +55,9 @@ echo -e "${BOLD}=== NauV Dhrystone Benchmark ($LABEL) ===${NC}"
 # ---------------------------------------------------------------------------
 if [ ! -x "$VTBPROG" ]; then
     echo -e "${RED}ERROR:${NC} Vtb_prog not found at $VTBPROG"
-    if [[ "$PIPELINE" == "1" ]]; then
+    if [[ "$BRANCH_PREDICT" == "1" ]]; then
+        echo "  Build it first: cd sim && make tb_prog PIPELINE=1 BRANCH_PREDICT=1"
+    elif [[ "$PIPELINE" == "1" ]]; then
         echo "  Build it first: cd sim && make tb_prog PIPELINE=1"
     else
         echo "  Build it first: cd sim && make tb_prog"
@@ -62,14 +69,23 @@ fi
 # Output CSV
 # ---------------------------------------------------------------------------
 mkdir -p "$(dirname "$OUT_CSV")"
-echo "runs,cycles,cycles_per_run,dmips_mhz" > "$OUT_CSV"
+if [[ "$BRANCH_PREDICT" == "1" ]]; then
+    echo "runs,cycles,cycles_per_run,dmips_mhz,bp_accuracy" > "$OUT_CSV"
+else
+    echo "runs,cycles,cycles_per_run,dmips_mhz" > "$OUT_CSV"
+fi
 
 # ---------------------------------------------------------------------------
 # Sweep
 # ---------------------------------------------------------------------------
 echo ""
-printf "  %-8s  %-12s  %-14s  %-12s\n" "Runs" "Cycles" "Cycles/Run" "DMIPS/MHz"
-printf "  %-8s  %-12s  %-14s  %-12s\n" "--------" "------------" "--------------" "------------"
+if [[ "$BRANCH_PREDICT" == "1" ]]; then
+    printf "  %-8s  %-12s  %-14s  %-12s  %-12s\n" "Runs" "Cycles" "Cycles/Run" "DMIPS/MHz" "BP Accuracy"
+    printf "  %-8s  %-12s  %-14s  %-12s  %-12s\n" "--------" "------------" "--------------" "------------" "------------"
+else
+    printf "  %-8s  %-12s  %-14s  %-12s\n" "Runs" "Cycles" "Cycles/Run" "DMIPS/MHz"
+    printf "  %-8s  %-12s  %-14s  %-12s\n" "--------" "------------" "--------------" "------------"
+fi
 
 for N in $RUNS; do
     # Rebuild dhrystone with this iteration count (-B forces recompile so
@@ -108,8 +124,17 @@ for N in $RUNS; do
     cycles_per_run=$(awk "BEGIN {printf \"%.1f\", $cycles / $N}")
     dmips_mhz=$(awk "BEGIN {printf \"%.4f\", ($N * 1e6) / ($cycles * $DHRYSTONES_PER_DMIPS)}")
 
-    printf "  %-8d  %-12d  %-14s  %-12s\n" "$N" "$cycles" "$cycles_per_run" "$dmips_mhz"
-    echo "$N,$cycles,$cycles_per_run,$dmips_mhz" >> "$OUT_CSV"
+    if [[ "$BRANCH_PREDICT" == "1" ]]; then
+        # Parse BP accuracy from: "  [BP STATS]  total=N  mispred=M  accuracy=PP.PP%"
+        bp_accuracy=$(grep -oP '\[BP STATS\].*accuracy=\K[\d.]+' "$run_log" | head -1)
+        bp_accuracy="${bp_accuracy:-N/A}"
+        printf "  %-8d  %-12d  %-14s  %-12s  %s%%\n" \
+               "$N" "$cycles" "$cycles_per_run" "$dmips_mhz" "$bp_accuracy"
+        echo "$N,$cycles,$cycles_per_run,$dmips_mhz,$bp_accuracy" >> "$OUT_CSV"
+    else
+        printf "  %-8d  %-12d  %-14s  %-12s\n" "$N" "$cycles" "$cycles_per_run" "$dmips_mhz"
+        echo "$N,$cycles,$cycles_per_run,$dmips_mhz" >> "$OUT_CSV"
+    fi
 
     rm -f "$run_log"
     trap - EXIT

@@ -24,3 +24,4 @@ module dmem #(parameter MEM_DEPTH = 4096) (
     output wire [31:0] rdata
 );
 endmodule
+

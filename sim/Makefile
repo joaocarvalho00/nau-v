@@ -10,17 +10,26 @@ VFLAGS    := --binary --assert -Wall -Wno-UNUSED -Wno-TIMESCALEMOD \
              -I$(SRC_DIR)/mem -I$(SRC_DIR)/wb -I$(SRC_DIR)/core
 
 # ---------------------------------------------------------------------------
-# Design selection: PIPELINE=0 → single-cycle core.sv
-#                   PIPELINE=1 → core_pipeline.sv  (module still named `core`)
+# Design selection: PIPELINE=0              → single-cycle core.sv
+#                   PIPELINE=1              → core_pipeline.sv  (module still named `core`)
+#                   PIPELINE=1 BRANCH_PREDICT=1 → core_pipeline_bp.sv
 # ---------------------------------------------------------------------------
 PIPELINE ?= 0
+BRANCH_PREDICT ?= 0
 
 ifeq ($(PIPELINE),1)
-  CORE_TOP  := $(SRC_DIR)/core/core_pipeline.sv
-  EXTRA_SRC := $(SRC_DIR)/core/hazard_unit.sv
-  # tb_core timing assumptions are single-cycle specific; skip it for pipeline
-  TESTS     := tb_alu tb_regfile tb_decoder tb_if_stage
-  BUILD_SUB := pipeline
+  ifeq ($(BRANCH_PREDICT),1)
+    CORE_TOP  := $(SRC_DIR)/core/core_pipeline_bp.sv
+    EXTRA_SRC := $(SRC_DIR)/core/hazard_unit.sv $(SRC_DIR)/core/branch_predictor.sv
+    TESTS     := tb_alu tb_regfile tb_decoder tb_if_stage tb_branch_predictor
+    BUILD_SUB := pipeline_bp
+  else
+    CORE_TOP  := $(SRC_DIR)/core/core_pipeline.sv
+    EXTRA_SRC := $(SRC_DIR)/core/hazard_unit.sv
+    # tb_core timing assumptions are single-cycle specific; skip it for pipeline
+    TESTS     := tb_alu tb_regfile tb_decoder tb_if_stage
+    BUILD_SUB := pipeline
+  endif
 else
   CORE_TOP  := $(SRC_DIR)/core/core.sv
   EXTRA_SRC :=
@@ -98,6 +107,14 @@ tb_core:
 	  $(TB_DIR)/tb_core.sv \
 	  --top-module tb_core \
 	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_core
+
+tb_branch_predictor:
+	mkdir -p $(BUILD_DIR)/$(BUILD_SUB)/tb_branch_predictor
+	$(VERILATOR) $(VFLAGS) \
+	  $(SRC_DIR)/core/branch_predictor.sv \
+	  $(TB_DIR)/tb_branch_predictor.sv \
+	  --top-module tb_branch_predictor \
+	  -Mdir $(BUILD_DIR)/$(BUILD_SUB)/tb_branch_predictor
 
 # ---------------------------------------------------------------------------
 # tb_prog — generic program runner (compiled once, driven by plusargs)

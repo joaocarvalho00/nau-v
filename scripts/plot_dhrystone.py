@@ -2,9 +2,13 @@
 """
 plot_dhrystone.py — Plot NauV Dhrystone benchmark results.
 
-Reads reports/dhrystone.csv and reports/dhrystone_pipeline.csv and produces:
-  docs/figures/dhrystone_dmips.png   — DMIPS/MHz vs iteration count
-  docs/figures/dhrystone_cpr.png     — Cycles per Dhrystone run vs iteration count
+Reads reports/dhrystone.csv, reports/dhrystone_pipeline.csv, and
+reports/dhrystone_pipeline_bp.csv (if present) and produces:
+  docs/figures/dhrystone_dmips.png      — DMIPS/MHz vs iteration count
+  docs/figures/dhrystone_cpr.png        — Cycles per Dhrystone run vs iteration count
+  docs/figures/dhrystone_bp_accuracy.png — BTB prediction accuracy vs iteration count
+                                           (only when dhrystone_pipeline_bp.csv has
+                                            bp_accuracy column)
 
 Usage:
     python3 scripts/plot_dhrystone.py
@@ -39,21 +43,39 @@ DESIGNS = [
         "color":  "#FF9800",
         "marker": "s",
     },
+    {
+        "csv":    REPO_ROOT / "reports" / "dhrystone_pipeline_bp.csv",
+        "label":  "Pipeline+BP",
+        "color":  "#4CAF50",
+        "marker": "^",
+    },
 ]
 
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_csv(path):
-    runs, cycles, cpr, dmips = [], [], [], []
+    """Return (runs, cycles, cpr, dmips, bp_accuracy).
+    bp_accuracy is a list of floats (or None for rows/files without the column).
+    """
+    runs, cycles, cpr, dmips, bp_acc = [], [], [], [], []
     with open(path) as f:
         reader = csv.DictReader(f)
+        has_bp = "bp_accuracy" in (reader.fieldnames or [])
         for row in reader:
             runs.append(int(row["runs"]))
             cycles.append(int(row["cycles"]))
             cpr.append(float(row["cycles_per_run"]))
             dmips.append(float(row["dmips_mhz"]))
-    return runs, cycles, cpr, dmips
+            if has_bp:
+                val = row.get("bp_accuracy", "")
+                try:
+                    bp_acc.append(float(val))
+                except (ValueError, TypeError):
+                    bp_acc.append(None)
+            else:
+                bp_acc.append(None)
+    return runs, cycles, cpr, dmips, bp_acc
 
 
 def style():
@@ -70,7 +92,7 @@ def style():
 def plot_dmips(datasets):
     fig, ax = plt.subplots(figsize=(7, 4))
 
-    for d, (runs, _, _, dmips) in datasets:
+    for d, (runs, _, _, dmips, _) in datasets:
         ax.plot(runs, dmips, marker=d["marker"], linewidth=2, color=d["color"],
                 markersize=7, label=d["label"])
         # Annotate steady-state value at largest run count
@@ -98,7 +120,7 @@ def plot_dmips(datasets):
 def plot_cpr(datasets):
     fig, ax = plt.subplots(figsize=(7, 4))
 
-    for d, (runs, _, cpr, _) in datasets:
+    for d, (runs, _, cpr, _, _) in datasets:
         ax.plot(runs, cpr, marker=d["marker"], linewidth=2, color=d["color"],
                 markersize=7, label=d["label"])
         ax.annotate(f"{cpr[-1]:.0f} cyc/run",
@@ -122,6 +144,51 @@ def plot_cpr(datasets):
     print(f"  Saved: {out}")
 
 
+def plot_bp_accuracy(datasets):
+    """Plot BTB prediction accuracy (%) vs iteration count.
+    Only datasets that have bp_accuracy data are included.
+    Skipped if no dataset has accuracy data.
+    """
+    bp_datasets = [
+        (d, data) for d, data in datasets
+        if any(v is not None for v in data[4])   # data[4] = bp_acc list
+    ]
+    if not bp_datasets:
+        return  # nothing to plot
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+
+    for d, (runs, _, _, _, bp_acc) in bp_datasets:
+        # Filter out None entries
+        valid = [(r, a) for r, a in zip(runs, bp_acc) if a is not None]
+        if not valid:
+            continue
+        r_vals, a_vals = zip(*valid)
+        ax.plot(r_vals, a_vals, marker=d["marker"], linewidth=2, color=d["color"],
+                markersize=7, label=d["label"])
+        ax.annotate(f"{a_vals[-1]:.1f}%",
+                    xy=(r_vals[-1], a_vals[-1]),
+                    xytext=(-70, -20),
+                    textcoords="offset points",
+                    fontsize=9, color=d["color"],
+                    arrowprops=dict(arrowstyle="->", color=d["color"], lw=1.2))
+
+    ax.set_xlabel("Number of Dhrystone iterations")
+    ax.set_ylabel("Branch prediction accuracy (%)")
+    ax.set_title("NauV — BTB Prediction Accuracy\n"
+                 "(accuracy rises as BTB warms up over startup + loop iterations)")
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    ax.set_ylim(50, 100)
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: f"{y:.0f}%"))
+    ax.legend(loc="lower right", fontsize=9)
+    fig.tight_layout()
+
+    out = FIG_DIR / "dhrystone_bp_accuracy.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"  Saved: {out}")
+
+
 def main():
     style()
 
@@ -140,6 +207,7 @@ def main():
 
     plot_dmips(datasets)
     plot_cpr(datasets)
+    plot_bp_accuracy(datasets)
     print("Done.")
 
 

@@ -4,6 +4,7 @@
 Usage:
   python3 plot_results.py           # single design plots (backward-compat)
   python3 plot_results.py --both    # side-by-side comparison plots
+  python3 plot_results.py --all     # comparison plots for all three designs
 """
 
 import csv
@@ -25,6 +26,7 @@ FIG_DIR  = "../docs/figures"
 DESIGN_STYLES = {
     "single_cycle": {"color": "royalblue",  "marker": "o", "label": "Single-cycle"},
     "pipeline":     {"color": "darkorange", "marker": "s", "label": "Pipeline"},
+    "pipeline_bp":  {"color": "seagreen",   "marker": "^", "label": "Pipeline+BP"},
 }
 
 
@@ -47,7 +49,7 @@ def extract(rows, key):
 
 
 def main():
-    both = "--both" in sys.argv
+    both = "--both" in sys.argv or "--all" in sys.argv
 
     if not os.path.exists(CSV_PATH):
         print(f"Error: {CSV_PATH} not found. Run 'make sweep' first.")
