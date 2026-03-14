@@ -15,8 +15,8 @@ Both variants implement the full base integer instruction set (RV32I, 47 instruc
 <!-- DASHBOARD_START -->
 | Suite | Status | Details | Last run |
 |-------|--------|---------|----------|
-| Unit tests (Verilator) | $\color{green}{\textsf{PASS}}$ | 168/168 checks · 5/5 testbenches | 2026-03-14 21:55 UTC |
-| riscv-tests RV32UI | $\color{green}{\textsf{PASS}}$ | 40/40 passed · 2 skipped | 2026-03-14 21:55 UTC |
+| Unit tests (Verilator) | $\color{green}{\textsf{PASS}}$ | 493/493 checks · 14/14 testbenches | 2026-03-14 21:57 UTC |
+| riscv-tests RV32UI | $\color{green}{\textsf{PASS}}$ | 40/40 passed · 2 skipped | 2026-03-14 21:57 UTC |
 <!-- DASHBOARD_END -->
 
 *Updated automatically by the [pre-commit hook](.githooks/pre-commit) on every commit. Run `bash .githooks/pre-commit` to refresh manually.*

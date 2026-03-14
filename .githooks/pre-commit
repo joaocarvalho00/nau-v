@@ -26,26 +26,51 @@ echo ""
 echo -e "${BOLD}=== NauV pre-commit checks ===${NC}"
 
 # ---------------------------------------------------------------------------
-# 1. Unit tests
+# 1. Unit tests — all three configurations
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Unit tests ---"
-UNIT_EXIT=0
-make -C "$REPO_ROOT/sim" run --no-print-directory >"$UNIT_LOG" 2>&1 || UNIT_EXIT=$?
-cat "$UNIT_LOG"
 
+UNIT_EXIT=0
+UNIT_TB_PASS=0; UNIT_TB_FAIL=0
+UNIT_CHECK_PASS=0; UNIT_CHECK_FAIL=0
+
+declare -A CONFIGS=(
+    ["single-cycle"]="PIPELINE=0 BRANCH_PREDICT=0"
+    ["pipeline"]="PIPELINE=1 BRANCH_PREDICT=0"
+    ["pipeline+bp"]="PIPELINE=1 BRANCH_PREDICT=1"
+)
+CONFIG_ORDER=("single-cycle" "pipeline" "pipeline+bp")
+
+for cfg in "${CONFIG_ORDER[@]}"; do
+    args="${CONFIGS[$cfg]}"
+    printf "\n  [%s]\n" "$cfg"
+    cfg_exit=0
+    make -C "$REPO_ROOT/sim" run $args --no-print-directory >"$UNIT_LOG" 2>&1 || cfg_exit=$?
+    cat "$UNIT_LOG"
+
+    if [ $cfg_exit -eq 0 ]; then
+        echo -e "  ${GREEN}PASS${NC} $cfg"
+    else
+        echo -e "  ${RED}FAIL${NC} $cfg"
+        UNIT_EXIT=1
+    fi
+
+    # Accumulate counts
+    UNIT_TB_PASS=$(( UNIT_TB_PASS + $(grep -c "^RESULT: PASS" "$UNIT_LOG" || true) ))
+    UNIT_TB_FAIL=$(( UNIT_TB_FAIL + $(grep -c "^RESULT: FAIL" "$UNIT_LOG" || true) ))
+    UNIT_CHECK_PASS=$(( UNIT_CHECK_PASS + $(grep -cP "^\s{2}PASS\s{2}" "$UNIT_LOG" || true) ))
+    UNIT_CHECK_FAIL=$(( UNIT_CHECK_FAIL + $(grep -cP "^\s{2}FAIL\s{2}" "$UNIT_LOG" || true) ))
+done
+
+echo ""
 if [ $UNIT_EXIT -eq 0 ]; then
-    echo -e "${GREEN}PASS${NC} unit tests"
+    echo -e "${GREEN}PASS${NC} unit tests (all configurations)"
 else
     echo -e "${RED}FAIL${NC} unit tests"
 fi
 
-# Parse unit test counts from log
-UNIT_TB_PASS=$(grep -c "^RESULT: PASS" "$UNIT_LOG" || true)
-UNIT_TB_FAIL=$(grep -c "^RESULT: FAIL" "$UNIT_LOG" || true)
 UNIT_TB_TOTAL=$(( UNIT_TB_PASS + UNIT_TB_FAIL ))
-UNIT_CHECK_PASS=$(grep -cP "^\s{2}PASS\s{2}" "$UNIT_LOG" || true)
-UNIT_CHECK_FAIL=$(grep -cP "^\s{2}FAIL\s{2}" "$UNIT_LOG" || true)
 UNIT_CHECK_TOTAL=$(( UNIT_CHECK_PASS + UNIT_CHECK_FAIL ))
 UNIT_STATUS=$( [[ $UNIT_EXIT -eq 0 ]] && echo "pass" || echo "fail" )
 
